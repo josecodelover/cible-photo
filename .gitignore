@@ -1,0 +1,3 @@
+# Fichiers intermédiaires de la construction de l'APK (on garde seulement l'APK final)
+android/out/*
+!android/out/CiblePhoto.apk

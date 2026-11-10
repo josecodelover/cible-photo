@@ -1,0 +1,1079 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#1d3b2a">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Cible Photo</title>
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<style>
+  :root {
+    --bg: #eef2ef; --card: #fff; --ink: #1f2420; --muted: #6b716c; --line: #d3dcd6;
+    --accent: #1d3b2a; --accent2: #2f6b4a;
+    --gold: #f5c518; --red: #e0352b; --blue: #2a9de1; --black: #222; --white: #f7f7f7; --miss: #9aa09b;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 16px; }
+  body { max-width: 560px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }
+  header { background: var(--accent); color: #fff; padding: 12px 14px; display: flex; align-items: center; gap: 8px; position: sticky; top: 0; z-index: 5; }
+  header h1 { font-size: 1.1rem; margin: 0; flex: 1; font-weight: 600; }
+  header button { background: rgba(255,255,255,.15); color: #fff; border: 0; border-radius: 8px; padding: 8px 12px; font-size: .95rem; }
+  main { padding: 14px; flex: 1; display: flex; flex-direction: column; gap: 14px; }
+  .card { background: var(--card); border-radius: 14px; padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .card h2 { font-size: 1rem; margin: 0 0 10px; color: var(--accent); }
+  label { display: block; font-size: .85rem; color: var(--muted); margin: 10px 0 4px; }
+  input[type=number] { width: 100%; font-size: 1.05rem; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--ink); }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; min-width: 0; }
+  .seg { display: flex; background: #e1e8e3; border-radius: 10px; padding: 3px; gap: 3px; }
+  .seg button { flex: 1; border: 0; background: transparent; padding: 9px 4px; border-radius: 8px; font-size: .9rem; color: var(--ink); }
+  .seg button.on { background: var(--accent); color: #fff; font-weight: 600; }
+  .btn { border: 0; border-radius: 12px; padding: 13px; font-size: 1rem; font-weight: 600; background: var(--accent); color: #fff; width: 100%; }
+  .btn.sec { background: #d8e1db; color: var(--ink); }
+  .btn.sm { padding: 10px 8px; font-size: .9rem; }
+  .btn:disabled { opacity: .4; }
+  .hint { font-size: .8rem; color: var(--muted); }
+  .link { background: none; border: 0; color: var(--accent2); text-decoration: underline; font-size: .85rem; padding: 6px 0 0; }
+  .hidden { display: none !important; }
+
+  /* Analyse */
+  .msg { font-size: .88rem; background: #fff7d6; border-radius: 10px; padding: 8px 10px; }
+  .cvwrap { margin: 0 -14px; background: #111; }
+  canvas#cv { display: block; width: 100%; height: min(60vh, 140vw); touch-action: none; }
+  .qual { border-radius: 10px; padding: 9px 11px; margin-bottom: 10px; font-size: .86rem; line-height: 1.35; }
+  .qual b { display: block; font-size: .95rem; margin-bottom: 2px; }
+  .qual.good { background: #dff3e6; color: #14532d; }
+  .qual.mid { background: #fff3cd; color: #6b4e00; }
+  .qual.bad { background: #fde0dd; color: #8a1c13; }
+  ol.steps { margin: 10px 0 0; padding-left: 20px; font-size: .86rem; line-height: 1.45; color: var(--ink); }
+  .cam { position: relative; margin: 0 -14px; aspect-ratio: 3 / 4; background: #000; overflow: hidden; }
+  .cam video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .cam svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .camtip { position: absolute; left: 0; right: 0; bottom: 8px; text-align: center; color: #fff; font-size: .85rem; text-shadow: 0 1px 3px #000; padding: 0 10px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .chip { border: 2px solid transparent; border-radius: 10px; min-width: 52px; padding: 6px 8px; font-weight: 700; font-size: 1.05rem; text-align: center; }
+  .chip small { display: block; font-size: .65rem; font-weight: 500; opacity: .8; }
+  .chip.sel { border-color: #ff2fb0; box-shadow: 0 0 0 2px #ff2fb055; }
+  .tot { margin-left: auto; text-align: right; font-size: .75rem; color: var(--muted); }
+  .tot b { display: block; font-size: 1.5rem; color: var(--ink); }
+
+  /* Couleurs des zones */
+  .z-X, .z-10, .z-9 { background: var(--gold); color: #222; }
+  .z-8, .z-7 { background: var(--red); color: #fff; }
+  .z-6, .z-5 { background: var(--blue); color: #fff; }
+  .z-4, .z-3 { background: var(--black); color: #fff; }
+  .z-2, .z-1 { background: var(--white); color: #222; box-shadow: inset 0 0 0 1px var(--line); }
+  .z-M { background: var(--miss); color: #fff; }
+
+  /* Feuille */
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+  th, td { padding: 7px 4px; text-align: center; border-bottom: 1px solid var(--line); }
+  th { font-size: .75rem; color: var(--muted); font-weight: 600; }
+  td.arr { text-align: left; }
+  tfoot td { font-weight: 700; border-bottom: 0; }
+  .mini { display: inline-block; min-width: 24px; padding: 2px 3px; margin: 1px; border-radius: 5px; font-size: .82rem; font-weight: 700; text-align: center; }
+  .stats { display: flex; justify-content: space-around; text-align: center; margin-top: 10px; }
+  .stats span { display: block; font-size: .72rem; color: var(--muted); }
+  .stats b { font-size: 1.25rem; }
+  svg.grp { width: 100%; display: block; border-radius: 10px; background: #cfd6d1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎯 Cible Photo</h1>
+  <button id="hdrBack" class="hidden">✕ Fermer</button>
+</header>
+<main id="app"></main>
+<input type="file" id="fCam" accept="image/*" capture="environment" class="hidden">
+<input type="file" id="fGal" accept="image/*" class="hidden">
+
+<script>
+"use strict";
+/* ===================================================================
+   Cible Photo — lecture des scores de tir à l'arc sur une photo.
+   1. détection du blason (anneaux de couleur -> ellipses)
+   2. détection des flèches (ce qui n'a pas la couleur de l'anneau)
+   3. correction à la main, puis feuille de marque et groupement
+   =================================================================== */
+const STORE = "ciblePhoto.v1";
+const FACES = {
+  // max : rayon marquant (en largeurs d'anneau) · dom : zone analysée · min : plus petite valeur
+  tri:  { name: "Trispot", max: 5,  dom: 5.4, min: 6, bounds: [["Y", 2], ["R", 4], ["B", 5]] },
+  full: { name: "Blason complet", max: 10, dom: 10, min: 1, bounds: [["Y", 2], ["R", 4], ["B", 6], ["K", 8]] },
+};
+const ZCOL = ["#f5c518", "#f5c518", "#e0352b", "#e0352b", "#2a9de1", "#2a9de1", "#222", "#222", "#f7f7f7", "#f7f7f7"];
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const $ = s => document.querySelector(s);
+const app = $("#app"), hdrBack = $("#hdrBack");
+
+let S = load() || { cfg: { face: "tri", diam: 40, shaft: 6, ten: "x", perEnd: 3 }, ends: [] };
+let screen = "home";
+let A = null;   // analyse en cours
+let cam = null; // flux vidéo de la visée
+
+function save() { localStorage.setItem(STORE, JSON.stringify(S)); }
+function load() { try { const s = JSON.parse(localStorage.getItem(STORE)); return s && s.cfg && s.ends ? s : null; } catch { return null; } }
+const face = () => FACES[S.cfg.face];
+const med = a => { if (!a.length) return 0; const b = Float64Array.from(a).sort(); return b[b.length >> 1]; };
+
+/* ---------- valeurs ---------- */
+const val = v => v === "X" ? 10 : v === "M" ? 0 : +v;
+const ord = v => v === "X" ? 11 : val(v);
+/* rayon du tube, en largeurs d'anneau (un anneau = diamètre / 20) */
+const shaftU = () => (S.cfg.shaft / 2) / (S.cfg.diam * 10 / 20);
+/* r : distance du centre de l'impact au centre, en largeurs d'anneau. Un cordon touché compte. */
+function scoreAt(r) {
+  const F = face(), re = Math.max(0, r - shaftU());
+  if (re >= F.max) return "M";
+  const v = 10 - Math.floor(re);
+  if (v >= 10) {
+    if (S.cfg.ten === "small") return re < 0.5 ? "10" : "9";
+    return S.cfg.ten === "x" && re < 0.5 ? "X" : "10";
+  }
+  return v < F.min ? "M" : String(v);
+}
+function ladder() {
+  const F = face(), l = ["M"];
+  for (let v = F.min; v <= 10; v++) l.push(String(v));
+  if (S.cfg.ten === "x") l.push("X");
+  return l;
+}
+
+/* ---------- géométrie : ellipses ---------- */
+function rho(e, x, y) {
+  const dx = x - e.cx, dy = y - e.cy, c = Math.cos(e.th), s = Math.sin(e.th);
+  return Math.hypot((dx * c + dy * s) / e.a, (-dx * s + dy * c) / e.b);
+}
+/* Rayon (en anneaux) d'un point, interpolé entre les ellipses détectées d'un spot. */
+function radius(sp, x, y) {
+  const E = sp.els;
+  let p = rho(E[0], x, y);
+  if (p <= 1 || E.length === 1) return p * E[0].R;
+  for (let i = 1; i < E.length; i++) {
+    const q = rho(E[i], x, y);
+    if (q <= 1) {
+      // position entre les deux ellipses, vue depuis l'intérieure (t1) et depuis l'extérieure (t2)
+      const k = E[i].R / E[i - 1].R, t1 = (p - 1) / (k - 1), t2 = (q - 1 / k) / (1 - 1 / k), m = Math.min(1, Math.max(0, (t1 + t2) / 2));
+      return E[i - 1].R + Math.min(1, Math.max(0, (1 - m) * t1 + m * t2)) * (E[i].R - E[i - 1].R);
+    }
+    p = q;
+  }
+  return p * E[E.length - 1].R;
+}
+/* Ellipse de l'anneau de rayon R (pour le tracé). */
+function ellAt(sp, R) {
+  const E = sp.els, L = E[E.length - 1];
+  if (R <= E[0].R || E.length === 1) { const k = R / E[0].R; return { ...E[0], a: E[0].a * k, b: E[0].b * k }; }
+  for (let i = 1; i < E.length; i++) if (R <= E[i].R) {
+    const p = E[i - 1], q = E[i], t = (R - p.R) / (q.R - p.R);
+    let d = q.th - p.th; while (d > Math.PI / 2) d -= Math.PI; while (d < -Math.PI / 2) d += Math.PI;
+    return { cx: p.cx + t * (q.cx - p.cx), cy: p.cy + t * (q.cy - p.cy), a: p.a + t * (q.a - p.a), b: p.b + t * (q.b - p.b), th: p.th + t * d };
+  }
+  const k = R / L.R; return { ...L, a: L.a * k, b: L.b * k };
+}
+const outer = sp => sp.els[sp.els.length - 1];
+const ringPx = sp => { const o = outer(sp); return Math.sqrt(o.a * o.b) / o.R; };
+/* Position d'un impact sur le blason : spot le plus proche, rayon, coordonnées normalisées. */
+function locate(x, y) {
+  let best = null;
+  A.spots.forEach((sp, si) => { const r = radius(sp, x, y); if (!best || r < best.r) best = { si, r }; });
+  if (!best) return null;
+  const o = outer(A.spots[best.si]), dx = x - o.cx, dy = y - o.cy, c = Math.cos(o.th), s = Math.sin(o.th);
+  const u = (dx * c + dy * s) / o.a, v = (-dx * s + dy * c) / o.b, n = Math.hypot(u, v) || 1;
+  best.nx = (u * c - v * s) / n * best.r; best.ny = (u * s + v * c) / n * best.r;
+  return best;
+}
+/* Cordon à juger : le bord du tube passe à moins d'un dixième d'anneau d'une ligne.
+   À cette distance la photo ne permet pas de trancher, c'est à l'archer de regarder. */
+function cordon(h) {
+  const l = locate(h.x, h.y); if (!l) return false;
+  const F = face(), re = l.r - shaftU(); if (re > F.max + 0.1) return false;
+  if (S.cfg.ten !== "plain" && Math.abs(re - 0.5) < 0.1) return true;
+  return re > 0.9 && Math.abs(re - Math.round(re)) < 0.1;
+}
+const hitVal = h => { if (h.ov) return h.ov; const l = locate(h.x, h.y); return l ? scoreAt(l.r) : "M"; };
+
+/* Ajustement d'ellipse par moindres carrés (conique), avec rejet des points aberrants. */
+function gauss(M) {                       // résout M (n lignes, n+1 colonnes) par pivot de Gauss
+  const n = M.length;
+  for (let i = 0; i < n; i++) {
+    let pv = i; for (let k = i + 1; k < n; k++) if (Math.abs(M[k][i]) > Math.abs(M[pv][i])) pv = k;
+    if (Math.abs(M[pv][i]) < 1e-12) return null;
+    [M[i], M[pv]] = [M[pv], M[i]];
+    for (let k = 0; k < n; k++) if (k !== i) { const f = M[k][i] / M[i][i]; for (let j = i; j <= n; j++) M[k][j] -= f * M[i][j]; }
+  }
+  return M.map((r, i) => r[n] / r[i]);
+}
+function conicFit(P) {
+  const n = P.length; if (n < 6) return null;
+  let mx = 0, my = 0; for (const p of P) { mx += p[0]; my += p[1]; } mx /= n; my /= n;
+  let sc = 0; for (const p of P) sc += Math.hypot(p[0] - mx, p[1] - my); sc /= n; if (!sc) return null;
+  const M = Array.from({ length: 5 }, () => new Float64Array(6));
+  for (const p of P) {
+    const x = (p[0] - mx) / sc, y = (p[1] - my) / sc, row = [x * x, x * y, y * y, x, y];
+    for (let i = 0; i < 5; i++) { for (let j = 0; j < 5; j++) M[i][j] += row[i] * row[j]; M[i][5] += row[i]; }
+  }
+  const sol = gauss(M); if (!sol) return null;
+  const [a, b, c, d, e] = sol;
+  const den = 4 * a * c - b * b; if (den <= 0) return null;
+  const x0 = (b * e - 2 * c * d) / den, y0 = (b * d - 2 * a * e) / den;
+  const k = -(a * x0 * x0 + b * x0 * y0 + c * y0 * y0 + d * x0 + e * y0 - 1);
+  const h = Math.hypot((a - c) / 2, b / 2), l1 = (a + c) / 2 + h, l2 = (a + c) / 2 - h;
+  if (k / l1 <= 0 || k / l2 <= 0) return null;
+  const el = { cx: mx + x0 * sc, cy: my + y0 * sc, a: Math.sqrt(k / l2) * sc, b: Math.sqrt(k / l1) * sc, th: 0.5 * Math.atan2(b, a - c) + Math.PI / 2 };
+  return el.b / el.a < 0.25 ? null : el;
+}
+function fitEllipse(P) {
+  let pts = P, e = null;
+  for (let it = 0; it < 5; it++) {
+    e = conicFit(pts); if (!e) return null;
+    const res = pts.map(p => Math.abs(rho(e, p[0], p[1]) - 1)), thr = Math.max(0.03, 2.5 * med(res));
+    const keep = pts.filter((p, i) => res[i] <= thr);
+    if (keep.length === pts.length || keep.length < 12) break;
+    pts = keep;
+  }
+  return e;
+}
+
+/* ---------- vision : outils ---------- */
+/* Classes de couleur : 0 autre, 1 jaune, 2 rouge, 3 bleu, 4 noir, 5 blanc */
+function classify(d, n) {
+  const cls = new Uint8Array(n);
+  for (let i = 0, j = 0; i < n; i++, j += 4) {
+    const r = d[j], g = d[j + 1], b = d[j + 2], mx = Math.max(r, g, b), mn = Math.min(r, g, b), v = mx / 255, s = mx ? (mx - mn) / mx : 0;
+    if (v < 0.22 || (v < 0.36 && s < 0.35)) { cls[i] = 4; continue; }
+    if (s < 0.2) { cls[i] = v >= 0.55 ? 5 : 0; continue; }
+    let h = mx === r ? ((g - b) / (mx - mn)) % 6 : mx === g ? (b - r) / (mx - mn) + 2 : (r - g) / (mx - mn) + 4;
+    h *= 60; if (h < 0) h += 360;
+    if (h >= 36 && h <= 75 && s >= 0.45 && v >= 0.4) cls[i] = 1;
+    else if ((h <= 20 || h >= 330) && s >= 0.45 && v >= 0.25) cls[i] = 2;
+    else if (h >= 170 && h <= 250 && s >= 0.3) cls[i] = 3;
+  }
+  return cls;
+}
+function morph(m, w, h, r, grow) {       // dilatation (grow) ou érosion par un carré de rayon r
+  const t = new Uint8Array(w * h), o = new Uint8Array(w * h), hit = grow ? 1 : 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let v = 1 - hit;
+    for (let k = Math.max(0, x - r), e = Math.min(w - 1, x + r); k <= e; k++) if (m[y * w + k] === hit) { v = hit; break; }
+    if (!grow && (x < r || x > w - 1 - r)) v = 0;
+    t[y * w + x] = v;
+  }
+  for (let x = 0; x < w; x++) for (let y = 0; y < h; y++) {
+    let v = 1 - hit;
+    for (let k = Math.max(0, y - r), e = Math.min(h - 1, y + r); k <= e; k++) if (t[k * w + x] === hit) { v = hit; break; }
+    o[y * w + x] = v;
+  }
+  return o;
+}
+function components(m, w, h) {          // composantes connexes (8 voisins) -> listes d'indices
+  const seen = new Uint8Array(w * h), stack = new Int32Array(w * h), out = [];
+  for (let s = 0; s < w * h; s++) {
+    if (!m[s] || seen[s]) continue;
+    let top = 0; stack[top++] = s; seen[s] = 1; const px = [];
+    while (top) {
+      const i = stack[--top], x = i % w, y = (i / w) | 0; px.push(i);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const X = x + dx, Y = y + dy; if (X < 0 || Y < 0 || X >= w || Y >= h) continue;
+        const j = Y * w + X; if (m[j] && !seen[j]) { seen[j] = 1; stack[top++] = j; }
+      }
+    }
+    out.push(px);
+  }
+  return out;
+}
+
+/* ---------- vision : blason ---------- */
+/* Depuis le centre jaune, on lance des rayons et on repère les changements de couleur ;
+   une ellipse est ajustée sur chaque frontière (jaune/rouge, rouge/bleu, ...). */
+function fitSpot(cls, d, w, h, cx, cy, ry) {
+  const F = face(), CODE = { Y: 1, R: 2, B: 3, K: 4 }, NB = F.bounds.length, NR = 160, win = Math.max(2, Math.round(ry * 0.15));
+  const L = Math.max(3, Math.round(ry * 0.22)), maxLen = Math.ceil(ry * F.max / 2 * 1.7) + L;
+  const pts = F.bounds.map(() => []);
+  for (let i = 0; i < NR; i++) {
+    const ang = i / NR * 2 * Math.PI, dx = Math.cos(ang), dy = Math.sin(ang), seq = [];
+    for (let t = 0; t < maxLen; t++) {
+      const x = Math.round(cx + dx * t), y = Math.round(cy + dy * t);
+      if (x < 0 || y < 0 || x >= w || y >= h) break;
+      seq.push(cls[y * w + x]);
+    }
+    let start = 0;
+    for (let b = 0; b < NB; b++) {
+      const cur = CODE[F.bounds[b][0]], nxt = b < NB - 1 ? CODE[F.bounds[b + 1][0]] : 0;
+      const ok = q => nxt ? q === nxt : q !== cur;
+      let found = -1;
+      for (let t = start; t + L <= seq.length; t++) {
+        let n = 0; for (let j = 0; j < L; j++) if (ok(seq[t + j])) n++;
+        if (n >= 0.7 * L) { found = t; break; }
+      }
+      if (found < 0) break;
+      while (!ok(seq[found])) found++;
+      // affinage : la frontière est là où la couleur change le plus vite (insensible au flou)
+      let bt = found, bg = -1;
+      for (let t = Math.max(2, found - win); t <= found + win; t++) {
+        const x1 = Math.round(cx + dx * (t - 2)), y1 = Math.round(cy + dy * (t - 2)), x2 = Math.round(cx + dx * (t + 2)), y2 = Math.round(cy + dy * (t + 2));
+        if (x1 < 0 || y1 < 0 || x1 >= w || y1 >= h || x2 < 0 || y2 < 0 || x2 >= w || y2 >= h) continue;
+        const i1 = (y1 * w + x1) * 4, i2 = (y2 * w + x2) * 4, gs = Math.abs(d[i1] - d[i2]) + Math.abs(d[i1 + 1] - d[i2 + 1]) + Math.abs(d[i1 + 2] - d[i2 + 2]);
+        if (gs > bg) { bg = gs; bt = t; }
+      }
+      pts[b].push([cx + dx * bt, cy + dy * bt]);
+      start = found + 1;
+    }
+  }
+  const els = [];
+  for (let b = 0; b < NB; b++) {
+    if (pts[b].length < NR * 0.5) break;
+    const e = fitEllipse(pts[b]); if (!e) break;
+    e.R = F.bounds[b][1]; els.push(e);
+  }
+  if (els.length < 2) return null;
+  const sz = e => Math.sqrt(e.a * e.b), q = sz(els[1]) / sz(els[0]);
+  if (q < 1.5 || q > 2.7 || Math.hypot(els[1].cx - els[0].cx, els[1].cy - els[0].cy) > sz(els[0]) * 0.6) return null;
+  return { els };
+}
+function findSpots(cls, d, w, h) {
+  const n = w * h, ym = new Uint8Array(n);
+  for (let i = 0; i < n; i++) ym[i] = cls[i] === 1 ? 1 : 0;
+  const comps = components(morph(ym, w, h, 2, true), w, h).sort((a, b) => b.length - a.length).slice(0, 10);
+  const want = S.cfg.face === "tri" ? 3 : 1, spots = [];
+  for (const px of comps) {
+    if (spots.length >= want || px.length < 80 || px.length < comps[0].length * 0.15) break;
+    let sx = 0, sy = 0; for (const i of px) { sx += i % w; sy += (i / w) | 0; }
+    const cx = sx / px.length, cy = sy / px.length;
+    if (spots.some(sp => rho(outer(sp), cx, cy) < 1.1)) continue;
+    const sp = fitSpot(cls, d, w, h, cx, cy, Math.sqrt(px.length / Math.PI));
+    if (sp) spots.push(sp);
+  }
+  return spots.sort((p, q) => outer(p).cy - outer(q).cy || outer(p).cx - outer(q).cx);
+}
+
+/* ---------- vision : flèches ---------- */
+/* Tout pixel dont la couleur s'écarte de la couleur médiane de son anneau est « étranger ».
+   Dans ces pixels on cherche des segments droits (tubes) ; l'impact est le bout fin du segment. */
+function findArrows(d, w, h, spots) {
+  const F = face(), n = w * h, cb = F.bounds.map(b => b[1]);
+  const zb = cb.slice(); if (F.dom > zb[zb.length - 1]) zb.push(F.dom);
+  const NZ = zb.length, rad = new Float32Array(n).fill(99), zid = new Int16Array(n).fill(-1);
+  let rpx = 0;
+  spots.forEach((sp, si) => {
+    const o = outer(sp), m = Math.max(o.a, o.b) * F.dom / o.R * 1.05;
+    rpx += ringPx(sp) / spots.length;
+    const x0 = Math.max(0, Math.floor(o.cx - m)), x1 = Math.min(w - 1, Math.ceil(o.cx + m));
+    const y0 = Math.max(0, Math.floor(o.cy - m)), y1 = Math.min(h - 1, Math.ceil(o.cy + m));
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const r = radius(sp, x, y), i = y * w + x;
+      if (r < F.dom && r < rad[i]) { rad[i] = r; let z = 0; while (r >= zb[z]) z++; zid[i] = si * NZ + z; }
+    }
+  });
+  // teinte normalisée par la luminance : insensible aux ombres
+  const feat = i => { const r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2], L = .299 * r + .587 * g + .114 * b, q = 100 / Math.max(L, 60); return [L * .3, (b - L) * q, (r - L) * q]; };
+  const band = r => {                    // 1 frontière de couleur · 2 cordon · 3 croix centrale
+    for (const b of cb) if (Math.abs(r - b) < 0.12) return 1;
+    if (r < 0.1) return 3;
+    return Math.abs(r - Math.round(r)) < 0.08 || Math.abs(r - 0.5) < 0.06 ? 2 : 0;
+  };
+  const NS = spots.length * NZ, sm = Array.from({ length: NS }, () => [[], [], []]);
+  for (let i = 0; i < n; i += 3) { const z = zid[i]; if (z < 0 || band(rad[i])) continue; const f = feat(i); sm[z][0].push(f[0]); sm[z][1].push(f[1]); sm[z][2].push(f[2]); }
+  const mu = sm.map(a => a[0].length > 20 ? [med(a[0]), med(a[1]), med(a[2])] : null);
+  const zd = (z, f) => mu[z] ? Math.hypot(f[0] - mu[z][0], f[1] - mu[z][1], f[2] - mu[z][2]) : 0;
+  const ds = Array.from({ length: NS }, () => []);
+  for (let i = 0; i < n; i += 3) { const z = zid[i]; if (z >= 0 && !band(rad[i])) ds[z].push(zd(z, feat(i))); }
+  const T = ds.map(a => Math.max(26, 3.5 * med(a)));
+
+  const shaftPx = shaftU() * 2 * rpx, g = Math.max(1, Math.ceil(0.07 * rpx)), fine = shaftPx >= 5;
+  let mask = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const z = zid[i]; if (z < 0) continue;
+    const r = rad[i], bt = band(r); if (bt === 3) continue;
+    const f = feat(i); let fg = zd(z, f) > T[z];
+    if (fg && bt === 1) {
+      const zl = z % NZ, b = cb.reduce((p, q) => Math.abs(q - r) < Math.abs(p - r) ? q : p), o = r < b ? zl + 1 : zl - 1;
+      const zo = z - zl + o;
+      if (o >= 0 && o < NZ && mu[z] && mu[zo]) {
+        // ni la couleur voisine, ni un mélange des deux (transition floue) : distance au segment qui les joint
+        const p = mu[z], q = mu[zo], vx = q[0] - p[0], vy = q[1] - p[1], vz = q[2] - p[2];
+        const t = Math.min(1, Math.max(0, ((f[0] - p[0]) * vx + (f[1] - p[1]) * vy + (f[2] - p[2]) * vz) / (vx * vx + vy * vy + vz * vz || 1)));
+        fg = Math.hypot(f[0] - p[0] - t * vx, f[1] - p[1] - t * vy, f[2] - p[2] - t * vz) > Math.max(T[z], T[zo]);
+      }
+    } else if (fg && bt === 2) {
+      // sur un cordon : tout ce qui est plus sombre que l'anneau (plus clair dans le noir) peut être le trait imprimé
+      const dL = mu[z] ? f[0] - mu[z][0] : 0, zn = F.bounds[z % NZ];
+      if (zn && zn[0] === "K" ? dL > 1 : dL < -1) fg = false;
+    }
+    mask[i] = fg ? 1 : 0;
+  }
+  mask = fine ? morph(morph(mask, w, h, 1, false), w, h, 1 + g, true) : morph(mask, w, h, g, true);
+
+  const tol = shaftPx / 2 + g + 1, minLen = 0.9 * rpx, cands = [], stubs = [];
+  const open = (x, y) => { x = Math.round(x); y = Math.round(y); return x < 0 || y < 0 || x >= w || y >= h || zid[y * w + x] < 0 || rad[y * w + x] > F.dom - 0.25; };
+  const hasK = F.bounds.some(b => b[0] === "K");
+  const isK = i => { const zn = F.bounds[zid[i] % NZ]; return !!zn && zn[0] === "K"; };
+  /* Au-delà du bout d'un segment : si l'on traverse du noir puis qu'on retrouve des pixels étrangers
+     dans l'axe, c'est le même tube. Renvoie la longueur à ajouter. */
+  const extend = (ln, t, dir) => {
+    let k = 0, last = null, seenK = false; const nx = -ln.uy, ny = ln.ux;
+    for (let s = 1; s < 6 * rpx; s++) {
+      const bx = ln.mx + ln.ux * (t + dir * s), by = ln.my + ln.uy * (t + dir * s), x = Math.round(bx), y = Math.round(by);
+      if (x < 0 || y < 0 || x >= w || y >= h) break;
+      const i = y * w + x; if (zid[i] < 0) break;
+      const sp = tol + 0.12 * s; let sum = 0, c = 0;      // recherche en cône : l'axe estimé n'est pas parfait
+      for (let o = -sp; o <= sp; o += 1.5) { const X = Math.round(bx + nx * o), Y = Math.round(by + ny * o); if (X >= 0 && Y >= 0 && X < w && Y < h && mask[Y * w + X]) { sum += o; c++; } }
+      if (c) { if (seenK) last = { s, x: bx + nx * sum / c, y: by + ny * sum / c }; k = 0; }
+      else if (isK(i) || band(rad[i]) === 1) { seenK = seenK || isK(i); if (++k > 2.6 * rpx) break; }
+      else break;
+    }
+    return last;
+  };
+  const rAt = (x, y) => { x = Math.round(x); y = Math.round(y); return x < 0 || y < 0 || x >= w || y >= h ? 99 : rad[y * w + x]; };
+  for (const px of components(mask, w, h)) {
+    if (px.length < 0.1 * rpx * rpx) continue;
+    // tache collée à une frontière de couleur ou au bord : défaut d'ajustement, pas une flèche
+    let r0 = 99, r1 = 0; for (const i of px) if (zid[i] >= 0) { if (rad[i] < r0) r0 = rad[i]; if (rad[i] > r1) r1 = rad[i]; }
+    if (zb.some(b => r0 > b - 0.35 && r1 < b + 0.35)) continue;
+    const step = Math.ceil(px.length / 5000), xs = [], ys = [];
+    for (let k = 0; k < px.length; k += step) { xs.push(px[k] % w); ys.push((px[k] / w) | 0); }
+    const lines = ransacLines(xs, ys, tol, minLen, step);
+    let got = 0;
+    for (const ln of lines) {
+      // largeur de la composante autour de la ligne : aux deux bouts et en tout
+      const len = ln.t1 - ln.t0, seg = 0.3 * len; let nA = 0, nB = 0, wide = 0, thin = 0;
+      for (let k = 0; k < xs.length; k++) {
+        const dx = xs[k] - ln.mx, dy = ys[k] - ln.my, t = dx * ln.ux + dy * ln.uy, p = Math.abs(dx * ln.uy - dy * ln.ux);
+        if (t < ln.t0 || t > ln.t1 || p > 4 * tol) continue;
+        wide++; if (p <= tol) thin++;
+        if (t < ln.t0 + seg) nA++; else if (t > ln.t1 - seg) nB++;
+      }
+      const P = t => [ln.mx + ln.ux * t, ln.my + ln.uy * t];
+      let a = P(ln.t0 + g), b = P(ln.t1 - g), ext = false, force = null;
+      if (hasK) {
+        // Tube noir invisible sur la zone noire : on regarde si la flèche reprend de l'autre côté du noir.
+        // Segment épais = empennage, l'impact est au bout du prolongement ; segment fin = tube, l'impact est à l'opposé.
+        const fat = wide > 1.6 * thin, eA = extend(ln, ln.t0, -1), eB = extend(ln, ln.t1, 1);
+        if (!!eA !== !!eB) {
+          ext = true;
+          if (eA) { ln.t0 -= eA.s; if (fat) force = a = [eA.x + ln.ux * g, eA.y + ln.uy * g]; else force = b; }
+          else { ln.t1 += eB.s; if (fat) force = b = [eB.x - ln.ux * g, eB.y - ln.uy * g]; else force = a; }
+        }
+      }
+      if (!ext && wide > 2.6 * thin) continue;         // tache large, pas un tube
+      const rs = [0, .25, .5, .75, 1].map(q => rAt(...P(ln.t0 + q * (ln.t1 - ln.t0))));
+      if (cb.some(q => rs.every(r => Math.abs(r - q) < 0.3))) continue;   // croissant le long d'une frontière
+      if (rs.every(r => Math.abs(r - Math.round(rs[2])) < 0.2)) continue;  // arc le long d'un cordon
+      const oa = open(...P(ln.t0)), ob = open(...P(ln.t1));
+      let tip, unsure = false;
+      if (oa && ob) continue;
+      if (force) tip = force;
+      else if (oa !== ob) {
+        // un bout sort de la zone : l'impact est l'autre... sauf si cet autre bout est l'empennage
+        // (flèche plantée ailleurs, dont l'arrière passe au-dessus de ce spot)
+        if (oa ? nB > 1.35 * nA : nA > 1.35 * nB) continue;
+        tip = oa ? b : a;
+      }
+      else if (nA > 1.35 * nB) tip = b;
+      else if (nB > 1.35 * nA) tip = a;
+      else { unsure = true; tip = Math.hypot(a[0] - w / 2, a[1] - h / 2) < Math.hypot(b[0] - w / 2, b[1] - h / 2) ? a : b; }
+      if (hasK) { const rt = rAt(tip[0], tip[1]); if (rt > 5.7 && rt < 8.3) unsure = true; }   // bout au bord du noir : à vérifier
+      if (!ext) {
+        // un tube sombre est invisible sur le trait d'un cordon : si le bout s'arrête juste devant un cordon,
+        // l'impact est quelque part dans l'épaisseur du trait -> on vise le milieu
+        const oth = tip === a ? b : a, ol = Math.hypot(tip[0] - oth[0], tip[1] - oth[1]) || 1, ox = (tip[0] - oth[0]) / ol, oy = (tip[1] - oth[1]) / ol;
+        if (band(rAt(tip[0] + ox * 2, tip[1] + oy * 2)) === 2) tip = [tip[0] + ox * 0.08 * rpx, tip[1] + oy * 0.08 * rpx];
+      }
+      cands.push({ x: tip[0], y: tip[1], unsure, q: ln.t1 - ln.t0, ends: [P(ln.t0), P(ln.t1)] }); got++;
+    }
+    if (!got && px.length < 6 * rpx * rpx) {           // petite tache sans segment
+      let x0 = w, x1 = 0, y0 = h, y1 = 0, sx = 0, sy = 0;
+      for (const i of px) { const x = i % w, y = (i / w) | 0; sx += x; sy += y; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      const bw = x1 - x0 + 1, bh = y1 - y0 + 1, big = Math.max(bw, bh);
+      // tache qui entre par le bord de la zone analysée : flèche plantée près du bord, tube sortant.
+      let ex = 0, ey = 0, ne = 0;
+      for (const i of px) if (rad[i] > F.dom - 0.2) { ex += i % w; ey += (i / w) | 0; ne++; }
+      if (ne) {
+        ex /= ne; ey /= ne; let far = -1, fx = 0, fy = 0;
+        for (const i of px) { const x = i % w, y = (i / w) | 0, dd = Math.hypot(x - ex, y - ey); if (dd > far) { far = dd; fx = x; fy = y; } }
+        const tx = fx - (fx - ex) / far * g, ty = fy - (fy - ey) / far * g;
+        if (far >= 0.3 * rpx && rAt(tx, ty) < Math.min(F.max + shaftU(), F.dom - 0.45)) { cands.push({ x: tx, y: ty, unsure: false, q: far, ends: [] }); continue; }
+      }
+      stubs.push({ px, cx: sx / px.length, cy: sy / px.length, blob: !lines.length && big >= 0.6 * rpx && big <= 3.5 * rpx && px.length >= 0.35 * bw * bh });
+    }
+  }
+  // Tube noir coupé par la zone noire : l'avant de la flèche est une petite tache isolée, reliée
+  // à son empennage par du noir. L'impact est alors le bout de cette tache.
+  if (hasK) for (const st of stubs) {
+    let best = null;
+    const ci = Math.round(st.cy) * w + Math.round(st.cx);
+    if (zid[ci] < 0 || isK(ci)) continue;              // l'avant visible d'un tube noir n'est jamais dans le noir
+    for (const c of cands) for (const e of c.ends) {
+      const vx = st.cx - e[0], vy = st.cy - e[1], d = Math.hypot(vx, vy);
+      if (d > 3.5 * rpx || d < 2) continue;
+      let nk = 0, nok = 0;
+      for (let q = 1; q < 12; q++) {
+        const i = Math.round(e[1] + vy * q / 12) * w + Math.round(e[0] + vx * q / 12);
+        if (zid[i] < 0) continue;
+        if (isK(i)) { nk++; nok++; } else if (mask[i] || band(rad[i]) === 1) nok++;
+      }
+      if (nk >= 3 && nok >= 9 && (!best || d < best.d)) best = { c, e, d };
+    }
+    if (!best) continue;
+    let far = -1, fx = 0, fy = 0;
+    for (const i of st.px) { const x = i % w, y = (i / w) | 0, d = Math.hypot(x - best.e[0], y - best.e[1]); if (d > far) { far = d; fx = x; fy = y; } }
+    best.c.x = fx - (fx - best.e[0]) / far * g; best.c.y = fy - (fy - best.e[1]) / far * g;
+    best.c.unsure = false; best.c.q += best.d; st.used = true;
+  }
+  for (const st of stubs) if (!st.used && st.blob) cands.push({ x: st.cx, y: st.cy, unsure: true, q: 0, ends: [] });   // flèche vue de face
+  cands.sort((p, q) => q.q - p.q);
+  const kept = cands.filter((c, i) => !cands.slice(0, i).some(o => Math.hypot(o.x - c.x, o.y - c.y) < 0.6 * rpx));   // doublons
+  return kept.slice(0, S.cfg.perEnd).sort((p, q) => p.y - q.y || p.x - q.x);
+}
+function ransacLines(xs, ys, tol, minLen, wt) {
+  const n = xs.length, alive = new Uint8Array(n).fill(1), out = [];
+  for (let li = 0; li < 10; li++) {
+    let best = 0, bi = 0, bux = 0, buy = 0;
+    for (let it = 0; it < 160; it++) {
+      const i = (Math.random() * n) | 0, j = (Math.random() * n) | 0; if (!alive[i] || !alive[j]) continue;
+      let ux = xs[j] - xs[i], uy = ys[j] - ys[i]; const l = Math.hypot(ux, uy); if (l < minLen * 0.6) continue;
+      ux /= l; uy /= l; let c = 0;
+      for (let k = 0; k < n; k++) if (alive[k] && Math.abs((xs[k] - xs[i]) * uy - (ys[k] - ys[i]) * ux) <= tol) c++;
+      if (c > best) { best = c; bi = i; bux = ux; buy = uy; }
+    }
+    if (best * wt < minLen * tol * 0.8) break;
+    // affinage : axe principal des points proches
+    let sx = 0, sy = 0, m = 0; const inl = [];
+    for (let k = 0; k < n; k++) if (alive[k] && Math.abs((xs[k] - xs[bi]) * buy - (ys[k] - ys[bi]) * bux) <= tol) { inl.push(k); sx += xs[k]; sy += ys[k]; m++; }
+    const mx = sx / m, my = sy / m; let xx = 0, yy = 0, xy = 0;
+    for (const k of inl) { const dx = xs[k] - mx, dy = ys[k] - my; xx += dx * dx; yy += dy * dy; xy += dx * dy; }
+    const ang = 0.5 * Math.atan2(2 * xy, xx - yy), ux = Math.cos(ang), uy = Math.sin(ang), ts = [];
+    for (let k = 0; k < n; k++) if (alive[k]) { const dx = xs[k] - mx, dy = ys[k] - my; if (Math.abs(dx * uy - dy * ux) <= tol) ts.push(dx * ux + dy * uy); }
+    ts.sort((a, b) => a - b);
+    // plus long tronçon continu
+    const gap = Math.max(4, 0.3 * minLen); let s0 = 0, bs = 0, be = 0;
+    for (let k = 1; k <= ts.length; k++) if (k === ts.length || ts[k] - ts[k - 1] > gap) { if (ts[k - 1] - ts[s0] > ts[be] - ts[bs]) { bs = s0; be = k - 1; } s0 = k; }
+    const t0 = ts[bs], t1 = ts[be], ok = t1 - t0 >= minLen && (be - bs + 1) * wt >= (t1 - t0) * tol * 0.7;
+    if (ok) out.push({ mx, my, ux, uy, t0, t1 });
+    for (let k = 0; k < n; k++) if (alive[k]) {
+      const dx = xs[k] - mx, dy = ys[k] - my, t = dx * ux + dy * uy, p = Math.abs(dx * uy - dy * ux);
+      if (ok ? p <= tol * 2 && t >= t0 - tol && t <= t1 + tol : p <= tol) alive[k] = 0;
+    }
+  }
+  return out;
+}
+
+/* ---------- contrôle de la photo ---------- */
+/* Renvoie les défauts qui imposent de refaire la photo (bad) et ceux qui gênent seulement (warn). */
+function quality(d, w, h, spots, k) {
+  const F = face(), bad = [], warn = [];
+  if (!spots.length) return { ok: false, bad: ["Blason non reconnu : cadrez-le en entier, bien de face, avec assez de lumière."], warn };
+  if (S.cfg.face === "tri" && spots.length < 3) bad.push(`${spots.length} spot${spots.length > 1 ? "s" : ""} reconnu${spots.length > 1 ? "s" : ""} sur 3 : cadrez le trispot en entier.`);
+  let cut = false, obl = 1, sz = [], sum = 0, cnt = 0; const ws = [];
+  for (const sp of spots) {
+    const e = ellAt(sp, F.max), m = Math.max(e.a, e.b) * 0.98, o = outer(sp), rp = ringPx(sp);
+    if (e.cx - m < 0 || e.cy - m < 0 || e.cx + m > w - 1 || e.cy + m > h - 1) cut = true;
+    obl = Math.min(obl, o.b / o.a); sz.push(Math.sqrt(o.a * o.b) / o.R);
+    // lumière : luminance moyenne du blason
+    for (let y = Math.max(0, Math.floor(e.cy - m)); y < Math.min(h, e.cy + m); y += 4) for (let x = Math.max(0, Math.floor(e.cx - m)); x < Math.min(w, e.cx + m); x += 4) {
+      if (radius(sp, x, y) > F.max) continue; const i = (y * w + x) * 4; sum += .299 * d[i] + .587 * d[i + 1] + .114 * d[i + 2]; cnt++;
+    }
+    // netteté : largeur de la transition jaune -> rouge (canal vert), le long de 48 rayons
+    const y0 = sp.els[0], c = Math.cos(y0.th), s = Math.sin(y0.th), span = Math.max(4, Math.round(rp * 0.6));
+    for (let q = 0; q < 48; q++) {
+      const a = q / 48 * 2 * Math.PI, ex = y0.a * Math.cos(a), ey = y0.b * Math.sin(a), px = y0.cx + ex * c - ey * s, py = y0.cy + ex * s + ey * c;
+      const l = Math.hypot(px - y0.cx, py - y0.cy), ux = (px - y0.cx) / l, uy = (py - y0.cy) / l, g = [];
+      for (let t = -span; t <= span; t++) { const X = Math.round(px + ux * t), Y = Math.round(py + uy * t); g.push(X < 0 || Y < 0 || X >= w || Y >= h ? 0 : d[(Y * w + X) * 4 + 1]); }
+      const hi = med(g.slice(0, 3)), lo = med(g.slice(-3)); if (hi - lo < 60) continue;
+      const i1 = g.findIndex(v => v < hi - 0.15 * (hi - lo)), i2 = g.findIndex(v => v < lo + 0.15 * (hi - lo));
+      if (i1 >= 0 && i2 >= i1) ws.push((i2 - i1 + 1) / rp);
+    }
+  }
+  const lum = cnt ? sum / cnt : 128, blur = ws.length > 10 ? med(ws) : 0, shaftPhoto = shaftU() * 2 * Math.min(...sz) / k;
+  if (cut) bad.push("Le blason est coupé par le bord de l'image : reculez un peu.");
+  if (obl < 0.8 || Math.max(...sz) / Math.min(...sz) > 1.15) bad.push("Photo prise trop de biais : placez-vous bien en face, téléphone à hauteur du centre.");
+  else if (obl < 0.9 || Math.max(...sz) / Math.min(...sz) > 1.08) warn.push("Photo légèrement de biais : les cordons seront moins fiables.");
+  if (shaftPhoto < 5) bad.push("Blason trop petit dans l'image : approchez-vous pour qu'il remplisse le cadre.");
+  else if (shaftPhoto < 9) warn.push("Blason un peu petit dans l'image : approchez-vous si possible.");
+  if (blur > 0.3) bad.push("Photo floue : tenez le téléphone immobile et laissez la mise au point se faire.");
+  else if (blur > 0.2) warn.push("Photo un peu floue : les cordons seront moins fiables.");
+  if (lum < 55) bad.push("Photo trop sombre : ajoutez de la lumière ou changez d'angle.");
+  else if (lum > 232) bad.push("Photo surexposée ou reflet sur le blason : changez d'angle, évitez le flash de près.");
+  return { ok: !bad.length, bad, warn, lum, blur, obl, shaftPhoto };
+}
+
+/* ---------- analyse d'une photo ---------- */
+function detect() {
+  const ph = A.photo, k = Math.min(1, 1100 / Math.max(ph.width, ph.height));
+  const w = Math.round(ph.width * k), h = Math.round(ph.height * k);
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(ph, 0, 0, w, h);
+  const d = g.getImageData(0, 0, w, h).data;
+  const spots = findSpots(classify(d, w * h), d, w, h);
+  const hits = spots.length ? findArrows(d, w, h, spots) : [];
+  A.q = quality(d, w, h, spots, k);
+  for (const sp of spots) for (const e of sp.els) { e.cx /= k; e.cy /= k; e.a /= k; e.b /= k; }
+  A.spots = spots; A.sel = -1;
+  A.hits = hits.map(q => ({ x: q.x / k, y: q.y / k, unsure: q.unsure, ov: null }));
+  const F = face(), nu = A.hits.filter(q => q.unsure).length;
+  A.msg = !spots.length ? `Blason non reconnu. Passez par « Ajuster le blason » pour le placer à la main.`
+    : `${F.name} : ${spots.length} ${spots.length > 1 ? "centres repérés" : "centre repéré"}, ${A.hits.length} impact${A.hits.length > 1 ? "s" : ""} proposé${A.hits.length > 1 ? "s" : ""}`
+      + (nu ? ` dont ${nu} incertain${nu > 1 ? "s" : ""} (en pointillé)` : "") + `. Vérifiez chaque repère : glissez-le pour le corriger, touchez la photo pour en ajouter un.`;
+}
+function manualSpots() {
+  const W = A.photo.width, H = A.photo.height, F = face();
+  if (S.cfg.face === "tri") { const r = Math.min(H / 7.2, W / 2.6); A.spots = [-1, 0, 1].map(i => ({ els: [{ R: F.max, cx: W / 2, cy: H / 2 + i * r * 2.25, a: r, b: r, th: 0 }] })); }
+  else { const r = Math.min(W, H) * 0.42; A.spots = [{ els: [{ R: F.max, cx: W / 2, cy: H / 2, a: r, b: r, th: 0 }] }]; }
+}
+async function openPhoto(src) {
+  let bmp = src;
+  if (src instanceof Blob) {
+    try { bmp = await createImageBitmap(src, { imageOrientation: "from-image" }); }
+    catch { bmp = await new Promise((ok, ko) => { const im = new Image(); im.onload = () => ok(im); im.onerror = ko; im.src = URL.createObjectURL(src); }); }
+  }
+  const k = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
+  const ph = document.createElement("canvas"); ph.width = Math.round(bmp.width * k); ph.height = Math.round(bmp.height * k);
+  ph.getContext("2d").drawImage(bmp, 0, 0, ph.width, ph.height);
+  if (bmp.close) bmp.close();
+  A = { photo: ph, spots: [], hits: [], sel: -1, mode: "hits", view: null, msg: "Analyse en cours…", drag: null };
+  screen = "analyse"; render();
+  setTimeout(() => {
+    try { detect(); } catch (e) { console.error(e); A.msg = "L'analyse automatique a échoué : placez le blason et les impacts à la main."; }
+    renderPanel(); draw();
+  }, 30);
+}
+for (const id of ["#fCam", "#fGal"]) $(id).onchange = e => {
+  const f = e.target.files[0]; e.target.value = "";
+  if (f) { stopCamera(); openPhoto(f).catch(() => alert("Impossible de lire cette image.")); }
+};
+
+/* ---------- rendu ---------- */
+function render() {
+  hdrBack.classList.toggle("hidden", screen === "home");
+  ({ home: renderHome, analyse: renderAnalyse, group: renderGroup, camera: renderCamera })[screen]();
+  window.scrollTo(0, 0);
+}
+hdrBack.onclick = () => {
+  if (screen === "analyse" && A && A.hits.length && !confirm("Abandonner cette photo ?")) return;
+  stopCamera(); screen = "home"; A = null; render();
+};
+const seg = (id, opts, cur) => `<div class="seg" id="${id}">${opts.map(([v, t]) => `<button data-v="${v}" class="${String(v) === String(cur) ? "on" : ""}">${t}</button>`).join("")}</div>`;
+const minis = arr => [...arr].sort((p, q) => ord(q.v) - ord(p.v)).map(a => `<span class="mini z-${a.v}">${a.v}</span>`).join("");
+const endTotal = e => e.arrows.reduce((s, a) => s + val(a.v), 0);
+
+function renderHome() {
+  const c = S.cfg, all = S.ends.flatMap(e => e.arrows), total = all.reduce((s, a) => s + val(a.v), 0);
+  let cum = 0;
+  app.innerHTML = `
+    <div class="card">
+      <h2>Nouvelle volée</h2>
+      <div class="row">
+        <button class="btn" id="bCam">📷 Photographier</button>
+        <button class="btn sec" id="bGal">🖼 Galerie</button>
+      </div>
+      <ol class="steps">
+        <li>Laissez les flèches en cible.</li>
+        <li>Placez-vous <b>bien en face</b> du blason, à 1 ou 2 m, téléphone à hauteur du centre.</li>
+        <li>Amenez le blason dans le <b>gabarit en pointillé</b>${c.face === "tri" ? " (un spot par cercle)" : ""} : il doit être entier, sans rien de coupé.</li>
+        <li>Évitez le contre-jour, les reflets et le flash de près.</li>
+        <li>Tenez le téléphone immobile, attendez la mise au point, puis déclenchez.</li>
+      </ol>
+      <div class="hint" style="margin-top:8px">L'application contrôle ensuite la photo (cadrage, biais, netteté, lumière) et vous dit s'il faut la refaire.</div>
+      <button class="link" id="bDemo">Essayer avec une photo de démonstration</button>
+    </div>
+    <div class="card">
+      <h2>Feuille de marque</h2>
+      ${S.ends.length ? `
+      <table><thead><tr><th>Vol.</th><th style="text-align:left">Flèches</th><th>Total</th><th>Cumul</th></tr></thead><tbody>
+        ${S.ends.map((e, i) => { const t = endTotal(e); cum += t; return `<tr data-i="${i}"><td>${i + 1}</td><td class="arr">${minis(e.arrows)}</td><td>${t}</td><td>${cum}</td></tr>`; }).join("")}
+      </tbody><tfoot><tr><td colspan="2" style="text-align:left">${all.length} flèches</td><td colspan="2">${total}</td></tr></tfoot></table>
+      <div class="stats">
+        <div><span>Moyenne / flèche</span><b>${all.length ? (total / all.length).toFixed(2) : "–"}</b></div>
+        <div><span>10${c.ten === "x" ? " + X" : ""}</span><b>${all.filter(a => val(a.v) === 10).length}</b></div>
+        <div><span>${c.ten === "x" ? "X" : "9"}</span><b>${all.filter(a => a.v === (c.ten === "x" ? "X" : "9")).length}</b></div>
+      </div>
+      <div class="hint" style="margin:8px 0">Touchez une volée pour la supprimer.</div>
+      <div class="row"><button class="btn sm" id="bGroup">Groupement</button><button class="btn sec sm" id="bNew">Nouvelle séance</button></div>`
+      : `<div class="hint">Aucune volée pour l'instant. Photographiez votre cible : les scores viennent s'inscrire ici.</div>`}
+    </div>
+    <div class="card">
+      <h2>Réglages</h2>
+      <label style="margin-top:0">Type de blason</label>
+      ${seg("cFace", [["tri", "Trispot (6 à 10)"], ["full", "Complet (1 à 10)"]], c.face)}
+      <label>Diamètre du blason (cm)${c.face === "tri" ? " — équivalent blason complet" : ""}</label>
+      ${seg("cDiam", [[40, "40"], [60, "60"], [80, "80"], [122, "122"]], c.diam)}
+      <div class="row">
+        <div><label>Diamètre du tube (mm)</label><input type="number" id="cShaft" min="3" max="10" step="0.1" inputmode="decimal" value="${c.shaft}"></div>
+        <div><label>Flèches par volée</label><input type="number" id="cPer" min="1" max="12" inputmode="numeric" value="${c.perEnd}"></div>
+      </div>
+      <label>Comptage du centre</label>
+      ${seg("cTen", [["x", "10 et X"], ["plain", "10 seul"], ["small", "Petit 10 (poulies)"]], c.ten)}
+      <div class="hint" style="margin-top:8px">Le diamètre du tube sert à compter les cordons : une flèche qui touche la ligne prend la valeur supérieure.</div>
+    </div>`;
+  $("#bCam").onclick = startCamera;
+  $("#bGal").onclick = () => $("#fGal").click();
+  $("#bDemo").onclick = () => openPhoto(makeDemo(false));
+  const pick = (id, key, num) => app.querySelectorAll(`#${id} button`).forEach(b => b.onclick = () => {
+    if (key === "face" && S.ends.length && b.dataset.v !== c.face && !confirm("Changer de blason en cours de séance ? Les volées déjà notées sont conservées.")) return;
+    c[key] = num ? +b.dataset.v : b.dataset.v; save(); renderHome();
+  });
+  pick("cFace", "face"); pick("cDiam", "diam", true); pick("cTen", "ten");
+  $("#cShaft").onchange = e => { const v = +e.target.value; c.shaft = v >= 3 && v <= 10 ? v : 6; save(); renderHome(); };
+  $("#cPer").onchange = e => { const v = Math.round(+e.target.value); c.perEnd = v >= 1 && v <= 12 ? v : 3; save(); renderHome(); };
+  app.querySelectorAll("tbody tr").forEach(tr => tr.onclick = () => {
+    if (confirm(`Supprimer la volée ${+tr.dataset.i + 1} ?`)) { S.ends.splice(+tr.dataset.i, 1); save(); renderHome(); }
+  });
+  if (S.ends.length) {
+    $("#bGroup").onclick = () => { screen = "group"; render(); };
+    $("#bNew").onclick = () => { if (confirm("Effacer toutes les volées et démarrer une nouvelle séance ?")) { S.ends = []; save(); renderHome(); } };
+  }
+}
+
+/* ---------- visée : aperçu de la caméra avec gabarit ---------- */
+function stopCamera() { if (cam) { cam.getTracks().forEach(t => t.stop()); cam = null; } }
+async function startCamera() {
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error("pas de caméra intégrée");
+    stopCamera();
+    cam = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: 2560 }, height: { ideal: 1920 } } });
+    A = null; screen = "camera"; render();
+  } catch (e) { $("#fCam").click(); }       // repli : appareil photo du téléphone
+}
+function renderCamera() {
+  const tri = S.cfg.face === "tri";
+  const guide = tri
+    ? `<rect x="88" y="16" width="124" height="368" rx="6"/>` + [82, 200, 318].map(y => `<circle cx="150" cy="${y}" r="52"/><circle cx="150" cy="${y}" r="21" stroke-width="1"/><path d="M144 ${y}H156M150 ${y - 6}V${y + 6}" stroke-width="1"/>`).join("")
+    : `<rect x="12" y="62" width="276" height="276" rx="6"/><circle cx="150" cy="200" r="132"/><circle cx="150" cy="200" r="79" stroke-width="1"/><circle cx="150" cy="200" r="26" stroke-width="1"/><path d="M142 200H158M150 192V208" stroke-width="1"/>`;
+  app.innerHTML = `
+    <div class="cam"><video id="vid" autoplay playsinline muted></video>
+      <svg viewBox="0 0 300 400" preserveAspectRatio="none" fill="none" stroke="#fff" stroke-width="2" stroke-dasharray="7 5" style="filter:drop-shadow(0 0 2px #000)">${guide}</svg>
+      <div class="camtip">${tri ? "Placez les 3 spots dans les 3 cercles" : "Placez le blason dans le cercle"}, bien de face, sans pencher le téléphone</div>
+    </div>
+    <button class="btn" id="cShot">📷 Déclencher</button>
+    <div class="row"><button class="btn sec sm" id="cGal">🖼 Galerie</button><button class="btn sec sm" id="cSys">Appareil photo du téléphone</button></div>
+    <div class="hint">Flèches en cible, 1 à 2 m, téléphone à hauteur du centre. Attendez que l'image soit nette avant de déclencher.</div>`;
+  const v = $("#vid"); v.srcObject = cam;
+  $("#cShot").onclick = () => {
+    if (!v.videoWidth) return;
+    // on ne garde que la partie visible à l'écran (la vidéo est recadrée en 3:4)
+    const box = v.getBoundingClientRect(), k = Math.max(box.width / v.videoWidth, box.height / v.videoHeight);
+    const sw = box.width / k, sh = box.height / k, c = document.createElement("canvas");
+    c.width = Math.round(sw); c.height = Math.round(sh);
+    c.getContext("2d").drawImage(v, (v.videoWidth - sw) / 2, (v.videoHeight - sh) / 2, sw, sh, 0, 0, c.width, c.height);
+    stopCamera(); openPhoto(c);
+  };
+  $("#cGal").onclick = () => $("#fGal").click();
+  $("#cSys").onclick = () => $("#fCam").click();
+}
+
+/* ---------- écran d'analyse ---------- */
+function renderAnalyse() {
+  app.innerHTML = `<div class="msg" id="amsg"></div><div class="cvwrap"><canvas id="cv"></canvas></div><div id="panel"></div>`;
+  const cv = $("#cv"), dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(cv.clientWidth * dpr); cv.height = Math.round(cv.clientHeight * dpr);
+  A.cv = cv;
+  const s = Math.min(cv.clientWidth / A.photo.width, cv.clientHeight / A.photo.height);
+  A.view = { s, min: s, ox: (cv.clientWidth - A.photo.width * s) / 2, oy: (cv.clientHeight - A.photo.height * s) / 2 };
+  bindCanvas(cv); renderPanel(); draw();
+}
+function renderPanel() {
+  if (screen !== "analyse") return;
+  $("#amsg").textContent = A.mode === "face"
+    ? "Faites coïncider les anneaux verts avec le blason : poignée centrale pour déplacer, poignées du bord pour la taille et l'inclinaison. Deux doigts pour zoomer."
+    : A.msg;
+  const p = $("#panel");
+  if (A.mode === "face") {
+    p.innerHTML = `<div class="row" style="margin-bottom:10px">
+        <button class="btn sec sm" id="pMan">Replacer au centre</button>
+        ${S.cfg.face === "tri" ? `<button class="btn sec sm" id="pAdd">＋ Spot</button><button class="btn sec sm" id="pDel">－ Spot</button>` : ""}
+      </div><button class="btn" id="pDone">Terminé</button>`;
+    $("#pMan").onclick = () => { manualSpots(); draw(); };
+    if ($("#pAdd")) {
+      $("#pAdd").onclick = () => { if (!A.spots.length) manualSpots(); else if (A.spots.length < 6) { const o = outer(A.spots[A.spots.length - 1]); A.spots.push({ els: [{ ...o, cx: A.photo.width / 2, cy: A.photo.height / 2 }] }); } draw(); };
+      $("#pDel").onclick = () => { A.spots.pop(); draw(); };
+    }
+    $("#pDone").onclick = () => { A.mode = "hits"; if (A.spots.length && A.msg.startsWith("Blason non")) A.msg = "Touchez la photo à l'endroit de chaque impact, puis glissez le repère pour l'ajuster."; renderPanel(); draw(); };
+    return;
+  }
+  const vals = A.hits.map(hitVal), tot = vals.reduce((s, v) => s + val(v), 0), sel = A.hits[A.sel];
+  const Q = A.q;
+  p.innerHTML = `
+    ${Q ? `<div class="qual ${Q.ok ? (Q.warn.length ? "mid" : "good") : "bad"}">
+      <b>${Q.ok ? (Q.warn.length ? "Photo exploitable, avec réserves" : "✓ Photo de bonne qualité") : "✗ Photo à refaire"}</b>
+      ${[...Q.bad, ...Q.warn].map(t => `<div>• ${esc(t)}</div>`).join("")}
+      ${Q.ok && !Q.warn.length ? "" : `<button class="btn sm ${Q.ok ? "sec" : ""}" id="pRetake" style="margin-top:8px">📷 Reprendre la photo</button>`}
+    </div>` : ""}
+    <div class="chips" style="margin-bottom:10px">
+      ${vals.map((v, i) => `<button class="chip z-${v} ${i === A.sel ? "sel" : ""}" data-i="${i}"><small>n° ${i + 1}${A.hits[i].ov ? " ✎" : cordon(A.hits[i]) ? " ⚠ cordon" : ""}</small>${v}</button>`).join("") || `<span class="hint">Aucun impact : touchez la photo pour en placer un.</span>`}
+      <div class="tot">Total<b>${tot}</b></div>
+    </div>
+    ${A.hits.some(h => !h.ov && cordon(h)) ? `<div class="hint" style="margin-bottom:10px">⚠ cordon : la flèche est à moins de ${(S.cfg.diam / 20).toFixed(0)} mm d'une ligne, la photo ne suffit pas pour trancher. Zoomez, regardez la cible, puis fixez la valeur avec « Valeur − / ＋ ».</div>` : ""}
+    ${sel ? `<div class="row" style="margin-bottom:10px">
+      <button class="btn sec sm" id="pMinus">Valeur −</button><button class="btn sec sm" id="pPlus">Valeur ＋</button><button class="btn sec sm" id="pRem">Supprimer</button></div>` : ""}
+    <div class="row" style="margin-bottom:10px">
+      <button class="btn sec sm" id="pFace">Ajuster le blason</button><button class="btn sec sm" id="pRedo">Relancer l'analyse</button>
+    </div>
+    <button class="btn" id="pOk" ${A.hits.length && A.spots.length ? "" : "disabled"}>Valider la volée (${A.hits.length} flèche${A.hits.length > 1 ? "s" : ""})</button>`;
+  if ($("#pRetake")) $("#pRetake").onclick = startCamera;
+  p.querySelectorAll(".chip").forEach(b => b.onclick = () => { A.sel = A.sel === +b.dataset.i ? -1 : +b.dataset.i; renderPanel(); draw(); });
+  if (sel) {
+    const bump = d => { const l = ladder(), i = l.indexOf(hitVal(sel)), j = Math.max(0, Math.min(l.length - 1, i + d)); const loc = locate(sel.x, sel.y); sel.ov = loc && scoreAt(loc.r) === l[j] ? null : l[j]; renderPanel(); draw(); };
+    $("#pMinus").onclick = () => bump(-1); $("#pPlus").onclick = () => bump(1);
+    $("#pRem").onclick = () => { A.hits.splice(A.sel, 1); A.sel = -1; renderPanel(); draw(); };
+  }
+  $("#pFace").onclick = () => { if (!A.spots.length) manualSpots(); A.mode = "face"; A.sel = -1; renderPanel(); draw(); };
+  $("#pRedo").onclick = () => { $("#amsg").textContent = "Analyse en cours…"; setTimeout(() => { detect(); renderPanel(); draw(); }, 30); };
+  $("#pOk").onclick = validateEnd;
+}
+function validateEnd() {
+  const n = A.hits.length, per = S.cfg.perEnd;
+  if (n > per && !confirm(`${n} impacts pour une volée de ${per} flèches. Valider quand même ?`)) return;
+  if (n < per && !confirm(`${n} impact${n > 1 ? "s" : ""} pour une volée de ${per} flèches : les flèches manquantes seront comptées M. Valider ?`)) return;
+  const arrows = A.hits.map(h => { const l = locate(h.x, h.y); return { v: hitVal(h), x: +l.nx.toFixed(3), y: +l.ny.toFixed(3) }; });
+  while (arrows.length < per) arrows.push({ v: "M" });
+  S.ends.push({ face: S.cfg.face, arrows }); save();
+  screen = "home"; A = null; render();
+}
+
+function draw() {
+  if (!A || !A.cv) return;
+  const cv = A.cv, g = cv.getContext("2d"), dpr = window.devicePixelRatio || 1, V = A.view, F = face(), px = 1 / V.s;
+  g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = "#111"; g.fillRect(0, 0, cv.width, cv.height);
+  g.setTransform(dpr * V.s, 0, 0, dpr * V.s, dpr * V.ox, dpr * V.oy);
+  g.drawImage(A.photo, 0, 0);
+  const edit = A.mode === "face", bounds = F.bounds.map(b => b[1]);
+  for (const sp of A.spots) {
+    for (let R = 1; R <= F.max; R++) {
+      const e = ellAt(sp, R), bold = bounds.includes(R) || R === F.max;
+      g.beginPath(); g.ellipse(e.cx, e.cy, e.a, e.b, e.th, 0, 2 * Math.PI);
+      g.lineWidth = (bold ? 1.8 : 0.9) * px; g.strokeStyle = `rgba(0,255,170,${edit ? 0.95 : bold ? 0.7 : 0.4})`; g.stroke();
+    }
+    if (edit) for (const [x, y] of handles(sp)) {
+      g.beginPath(); g.arc(x, y, 11 * px, 0, 7); g.fillStyle = "rgba(255,255,255,.9)"; g.fill();
+      g.lineWidth = 3 * px; g.strokeStyle = "#ff2fb0"; g.stroke();
+    }
+  }
+  A.hits.forEach((h, i) => {
+    const loc = locate(h.x, h.y), sr = Math.max(4 * px, loc ? shaftU() * ringPx(A.spots[loc.si]) : 0), sel = i === A.sel;
+    g.setLineDash(h.unsure ? [4 * px, 3 * px] : []);
+    g.beginPath(); g.arc(h.x, h.y, sr, 0, 7);
+    g.lineWidth = 4 * px; g.strokeStyle = "rgba(0,0,0,.6)"; g.stroke();
+    g.lineWidth = 2 * px; g.strokeStyle = sel ? "#fff200" : "#ff2fb0"; g.stroke();
+    g.setLineDash([]);
+    g.beginPath(); g.moveTo(h.x - sr - 5 * px, h.y); g.lineTo(h.x + sr + 5 * px, h.y); g.moveTo(h.x, h.y - sr - 5 * px); g.lineTo(h.x, h.y + sr + 5 * px);
+    g.lineWidth = 1 * px; g.stroke();
+    g.font = `bold ${15 * px}px system-ui, sans-serif`; g.lineWidth = 4 * px; g.strokeStyle = "rgba(0,0,0,.75)"; g.fillStyle = "#fff";
+    const tx = h.x + sr + 6 * px, ty = h.y - sr - 4 * px;
+    g.strokeText(i + 1, tx, ty); g.fillText(i + 1, tx, ty);
+  });
+  // loupe pendant le déplacement d'un repère
+  if (A.drag && A.drag.kind === "hit") {
+    const h = A.hits[A.drag.i], cw = cv.clientWidth, R = 66, lx = A.drag.fx < cw / 2 ? cw - R - 8 : R + 8, ly = R + 8, z = Math.max(V.s * 3, 1.5);
+    const loc = locate(h.x, h.y), sr = loc ? shaftU() * ringPx(A.spots[loc.si]) * z : 0;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.save(); g.beginPath(); g.arc(lx, ly, R, 0, 7); g.clip();
+    g.fillStyle = "#111"; g.fillRect(lx - R, ly - R, 2 * R, 2 * R);
+    g.drawImage(A.photo, h.x - R / z, h.y - R / z, 2 * R / z, 2 * R / z, lx - R, ly - R, 2 * R, 2 * R);
+    g.strokeStyle = "#ff2fb0"; g.lineWidth = 1.5;
+    g.beginPath(); g.arc(lx, ly, Math.max(3, sr), 0, 7); g.moveTo(lx - R, ly); g.lineTo(lx - sr - 3, ly); g.moveTo(lx + sr + 3, ly); g.lineTo(lx + R, ly);
+    g.moveTo(lx, ly - R); g.lineTo(lx, ly - sr - 3); g.moveTo(lx, ly + sr + 3); g.lineTo(lx, ly + R); g.stroke();
+    g.restore();
+    g.beginPath(); g.arc(lx, ly, R, 0, 7); g.lineWidth = 3; g.strokeStyle = "#fff"; g.stroke();
+    g.font = "bold 20px system-ui, sans-serif"; g.lineWidth = 4; g.strokeStyle = "rgba(0,0,0,.8)"; g.fillStyle = "#fff";
+    const v = hitVal(h); g.strokeText(v, lx - R + 4, ly + R - 2); g.fillText(v, lx - R + 4, ly + R - 2);
+  }
+}
+/* poignées d'un spot : centre, bout du grand axe, bout du petit axe */
+function handles(sp) {
+  const o = outer(sp), c = Math.cos(o.th), s = Math.sin(o.th);
+  return [[o.cx, o.cy], [o.cx + o.a * c, o.cy + o.a * s], [o.cx - o.b * s, o.cy + o.b * c]];
+}
+function bindCanvas(cv) {
+  const pts = new Map(); let G = null;
+  const pos = e => { const r = cv.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  const toPhoto = p => ({ x: (p.x - A.view.ox) / A.view.s, y: (p.y - A.view.oy) / A.view.s });
+  const near = (p, x, y) => Math.hypot(p.x - (x * A.view.s + A.view.ox), p.y - (y * A.view.s + A.view.oy));
+  function pick(p) {
+    let best = null, bd = 28;
+    if (A.mode === "hits") A.hits.forEach((h, i) => { const d = near(p, h.x, h.y); if (d < bd) { bd = d; best = { kind: "hit", i, ox: h.x, oy: h.y }; } });
+    else A.spots.forEach((sp, si) => handles(sp).forEach(([x, y], k) => { const d = near(p, x, y); if (d < bd) { bd = d; best = { kind: "spot", si, k, els: sp.els.map(e => ({ ...e })), hx: x, hy: y }; } }));
+    return best;
+  }
+  function zoomAt(p, s) {
+    const V = A.view, q = toPhoto(p); V.s = Math.max(V.min * 0.8, Math.min(V.min * 14, s));
+    V.ox = p.x - q.x * V.s; V.oy = p.y - q.y * V.s;
+  }
+  cv.onpointerdown = e => {
+    cv.setPointerCapture(e.pointerId); const p = pos(e); pts.set(e.pointerId, p);
+    if (pts.size === 1) {
+      const t = pick(p);
+      G = t ? { type: "drag", t, start: p } : { type: "tap", start: p, ox: A.view.ox, oy: A.view.oy };
+      if (t && t.kind === "hit") { A.sel = t.i; A.drag = { kind: "hit", i: t.i, fx: p.x }; renderPanel(); }
+    } else if (pts.size === 2) {
+      if (G && G.type === "drag" && G.t.kind === "hit") { const h = A.hits[G.t.i]; h.x = G.t.ox; h.y = G.t.oy; }
+      const [a, b] = [...pts.values()];
+      G = { type: "pinch", d: Math.hypot(a.x - b.x, a.y - b.y), s: A.view.s, q: toPhoto({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }) }; A.drag = null;
+    }
+    draw();
+  };
+  cv.onpointermove = e => {
+    if (!pts.has(e.pointerId) || !G) return;
+    const p = pos(e); pts.set(e.pointerId, p);
+    if (G.type === "tap" && Math.hypot(p.x - G.start.x, p.y - G.start.y) > 8) G.type = "pan";
+    if (G.type === "pan") { A.view.ox = G.ox + p.x - G.start.x; A.view.oy = G.oy + p.y - G.start.y; }
+    else if (G.type === "pinch" && pts.size === 2) {
+      const [a, b] = [...pts.values()], m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, V = A.view;
+      V.s = Math.max(V.min * 0.8, Math.min(V.min * 14, G.s * Math.hypot(a.x - b.x, a.y - b.y) / G.d));
+      V.ox = m.x - G.q.x * V.s; V.oy = m.y - G.q.y * V.s;
+    } else if (G.type === "drag") {
+      const dx = (p.x - G.start.x) / A.view.s, dy = (p.y - G.start.y) / A.view.s, t = G.t;
+      if (t.kind === "hit") {
+        const h = A.hits[t.i]; h.x = t.ox + dx; h.y = t.oy + dy;
+        if (dx || dy) { h.ov = null; h.unsure = false; }
+        A.drag.fx = p.x; renderPanel();
+      } else {
+        const sp = A.spots[t.si];
+        if (t.k === 0) sp.els = t.els.map(el => ({ ...el, cx: el.cx + dx, cy: el.cy + dy }));
+        else {
+          const o = { ...t.els[t.els.length - 1] }, hx = t.hx + dx - o.cx, hy = t.hy + dy - o.cy, d = Math.max(8, Math.hypot(hx, hy));
+          if (t.k === 1) { o.a = d; o.th = Math.atan2(hy, hx); } else { o.b = d; o.th = Math.atan2(hy, hx) - Math.PI / 2; }
+          sp.els = [o];
+        }
+      }
+    }
+    draw();
+  };
+  const up = e => {
+    if (!pts.has(e.pointerId)) return;
+    pts.delete(e.pointerId);
+    if (G && G.type === "tap" && e.type === "pointerup" && A.mode === "hits") {
+      if (!A.spots.length) alert("Placez d'abord le blason (« Ajuster le blason »).");
+      else if (A.hits.length < 12) { const q = toPhoto(G.start); A.hits.push({ x: q.x, y: q.y, ov: null }); A.sel = A.hits.length - 1; }
+    }
+    if (!pts.size) { G = null; A.drag = null; renderPanel(); } else if (G && G.type === "pinch") G = { type: "none" };
+    draw();
+  };
+  cv.onpointerup = up; cv.onpointercancel = up;
+  cv.onwheel = e => { e.preventDefault(); zoomAt(pos(e), A.view.s * (e.deltaY < 0 ? 1.2 : 1 / 1.2)); draw(); };
+}
+
+/* ---------- groupement ---------- */
+function renderGroup() {
+  const F = face(), ringCm = S.cfg.diam / 20, R = F.max + 0.6, su = shaftU();
+  const pts = S.ends.filter(e => e.face === S.cfg.face).flatMap(e => e.arrows).filter(a => a.x != null);
+  let mx = 0, my = 0; for (const a of pts) { mx += a.x; my += a.y; } if (pts.length) { mx /= pts.length; my /= pts.length; }
+  const disp = pts.length ? pts.reduce((s, a) => s + Math.hypot(a.x - mx, a.y - my), 0) / pts.length : 0;
+  const cm = v => (Math.abs(v) * ringCm).toFixed(1).replace(".", ",");
+  const off = Math.hypot(mx, my), dir = [Math.abs(mx) > 0.15 ? (mx > 0 ? "à droite" : "à gauche") : "", Math.abs(my) > 0.15 ? (my > 0 ? "en bas" : "en haut") : ""].filter(Boolean).join(" et ");
+  let rings = "";
+  for (let k = F.max; k >= 1; k--) rings += `<circle r="${k}" fill="${ZCOL[k - 1]}" stroke="${k === 7 ? "#ddd" : "#333"}" stroke-width=".03"/>`;
+  app.innerHTML = `
+    <div class="card">
+      <h2>Groupement de la séance</h2>
+      <svg class="grp" viewBox="${-R} ${-R} ${2 * R} ${2 * R}">
+        ${rings}<circle r=".5" fill="none" stroke="#333" stroke-width=".03"/>
+        ${pts.map(a => `<circle cx="${a.x}" cy="${a.y}" r="${Math.max(su, 0.09)}" fill="#ff2fb0" fill-opacity=".8" stroke="#fff" stroke-width=".04"/>`).join("")}
+        ${pts.length > 1 ? `<circle cx="${mx}" cy="${my}" r="${disp}" fill="none" stroke="#00e0a0" stroke-width=".06" stroke-dasharray=".2 .14"/>
+        <path d="M${mx - .3} ${my}H${mx + .3}M${mx} ${my - .3}V${my + .3}" stroke="#00e0a0" stroke-width=".09"/>` : ""}
+      </svg>
+      ${pts.length ? `
+      <div class="stats">
+        <div><span>Impacts</span><b>${pts.length}</b></div>
+        <div><span>Écart du centre</span><b>${cm(off)} cm</b></div>
+        <div><span>Dispersion moyenne</span><b>${cm(disp)} cm</b></div>
+      </div>
+      <p style="margin:12px 0 0;font-size:.92rem">${off > 0.3 && dir
+        ? `Le groupe est décalé de ${cm(mx)} cm ${mx > 0 ? "à droite" : "à gauche"} et ${cm(my)} cm ${my > 0 ? "en bas" : "en haut"}. Pour recentrer, déplacez le viseur ${dir} (le viseur suit la flèche).`
+        : "Le groupe est centré : rien à changer au viseur."}</p>
+      <div class="hint" style="margin-top:8px">Croix verte : centre moyen des impacts. Cercle pointillé : dispersion moyenne.${S.cfg.face === "tri" ? " Les trois spots sont superposés." : ""}</div>`
+      : `<div class="hint" style="margin-top:8px">Aucun impact enregistré sur ce type de blason.</div>`}
+    </div>
+    <button class="btn sec" id="gBack">Retour</button>`;
+  $("#gBack").onclick = () => { screen = "home"; render(); };
+}
+
+/* ---------- photo de démonstration (dessinée) ---------- */
+/* rand : scène tirée au hasard (bancs de test) ; sinon scène fixe. */
+function makeDemo(rand) {
+  const W = 1500, H = 2000, c = document.createElement("canvas"); c.width = W; c.height = H;
+  const g = c.getContext("2d"), tri = S.cfg.face === "tri", F = face(), rnd = (a, b) => a + Math.random() * (b - a);
+  g.fillStyle = "#8a7355"; g.fillRect(0, 0, W, H);
+  for (let i = 0; i < 3500; i++) { g.fillStyle = `rgba(${rnd(60, 120) | 0},${rnd(45, 85) | 0},${rnd(25, 55) | 0},.3)`; g.fillRect(rnd(0, W), rnd(0, H), rnd(30, 90), 3); }
+  const kz = rand ? rnd(0.72, 0.98) : 0.95;
+  g.save(); g.translate(W / 2, H / 2); g.rotate(rand ? rnd(-0.08, 0.08) : 0.03); g.scale(kz, kz); g.translate(-W / 2, -H / 2);
+  const centers = tri ? [[750, 400], [750, 1000], [750, 1600]] : [[750, 1000]], ring = tri ? 54 : 66, sh = shaftU() * 2 * ring;
+  g.fillStyle = "#f1efe8"; if (tri) g.fillRect(440, 60, 620, 1880); else g.fillRect(50, 300, 1400, 1400);
+  const cols = ["#f6d21c", "#f6d21c", "#e2392f", "#e2392f", "#35a7e6", "#35a7e6", "#1d1d1d", "#1d1d1d", "#f1efe8", "#f1efe8"];
+  for (const [cx, cy] of centers) {
+    for (let k = F.max; k >= 1; k--) { g.beginPath(); g.arc(cx, cy, k * ring, 0, 7); g.fillStyle = cols[k - 1]; g.fill(); g.lineWidth = 2; g.strokeStyle = k === 7 ? "#eee" : "#222"; g.stroke(); }
+    g.beginPath(); g.arc(cx, cy, ring / 2, 0, 7); g.stroke();
+  }
+  const list = window._demoList ? window._demoList : !rand ? (tri ? [[0, 0.3, 1.0], [1, 2.6, 3.5], [2, 4.4, 5.5]] : [[0, 0.4, 1], [0, 2.7, 2.5], [0, 5.3, 4], [0, 7.4, 5.2], [0, 1.5, 0.2], [0, 3.6, 3.3]].slice(0, S.cfg.perEnd))
+    : tri ? [0, 1, 2].map(i => [i, rnd(0, 5.2), rnd(0, 6.28)]) : Array.from({ length: S.cfg.perEnd }, () => [0, rnd(0, 9.6), rnd(0, 6.28)]);
+  const vane = ["#19c37d", "#ff7a1a", "#b44dff"], tubes = ["#16181a", "#16181a", "#3a3d42", "#b9bcc0"];
+  const tf = g.getTransform(), flat = [];
+  list.forEach(([si, r, an], n) => {
+    const x = centers[si][0] + Math.cos(an) * r * ring, y = centers[si][1] + Math.sin(an) * r * ring;
+    flat.push([tf.a * x + tf.c * y + tf.e, tf.b * x + tf.d * y + tf.f]);
+    let dx = x - W / 2, dy = y - H / 2; if (Math.hypot(dx, dy) < 120) { dx = Math.cos(an + 1); dy = Math.sin(an + 1); }
+    const a = Math.atan2(dy, dx) + rnd(-0.35, 0.35), L = rand ? rnd(160, 270) : rnd(200, 250), ux = Math.cos(a), uy = Math.sin(a);
+    const seg = (t0, t1, wd, col, ox = 0, oy = 0) => { g.beginPath(); g.moveTo(x + ux * t0 + ox, y + uy * t0 + oy); g.lineTo(x + ux * t1 + ox, y + uy * t1 + oy); g.lineWidth = wd; g.strokeStyle = col; g.stroke(); };
+    seg(0, L, sh, "rgba(0,0,0,.22)", 10, 14);
+    seg(0, L, sh, rand ? tubes[(Math.random() * 4) | 0] : tubes[0]); seg(L * 0.66, L * 0.95, sh * 4, vane[n % 3]); seg(L * 0.95, L, sh * 1.3, "#f2f2f2");
+  });
+  g.restore();
+  // perspective : les 4 coins de la scène à plat sont déplacés, comme une photo prise de biais
+  const o = rand ? () => rnd(-110, 110) : null;
+  const dst = rand ? [[o(), o()], [W + o(), o()], [W + o(), H + o()], [o(), H + o()]] : [[45, 30], [W - 70, 10], [W - 25, H - 45], [55, H - 20]];
+  const src = [[0, 0], [W, 0], [W, H], [0, H]], M = [];
+  src.forEach(([x, y], i) => { const [X, Y] = dst[i]; M.push([x, y, 1, 0, 0, 0, -x * X, -y * X, X], [0, 0, 0, x, y, 1, -x * Y, -y * Y, Y]); });
+  const hm = gauss(M.map(r => Float64Array.from(r))), h = [...hm, 1];
+  const inv = [h[4] * h[8] - h[5] * h[7], h[2] * h[7] - h[1] * h[8], h[1] * h[5] - h[2] * h[4], h[5] * h[6] - h[3] * h[8], h[0] * h[8] - h[2] * h[6], h[2] * h[3] - h[0] * h[5], h[3] * h[7] - h[4] * h[6], h[1] * h[6] - h[0] * h[7], h[0] * h[4] - h[1] * h[3]];
+  const sd = g.getImageData(0, 0, W, H), s = sd.data, od = g.createImageData(W, H), d = od.data;
+  for (let Y = 0, j = 0; Y < H; Y++) for (let X = 0; X < W; X++, j += 4) {
+    const q = inv[6] * X + inv[7] * Y + inv[8], x = (inv[0] * X + inv[1] * Y + inv[2]) / q, y = (inv[3] * X + inv[4] * Y + inv[5]) / q;
+    const x0 = Math.floor(x), y0 = Math.floor(y);
+    if (x0 < 0 || y0 < 0 || x0 >= W - 1 || y0 >= H - 1) { d[j] = 70; d[j + 1] = 62; d[j + 2] = 55; d[j + 3] = 255; continue; }
+    const fx = x - x0, fy = y - y0, i = (y0 * W + x0) * 4;
+    for (let k = 0; k < 3; k++) d[j + k] = (s[i + k] * (1 - fx) + s[i + 4 + k] * fx) * (1 - fy) + (s[i + W * 4 + k] * (1 - fx) + s[i + W * 4 + 4 + k] * fx) * fy;
+    d[j + 3] = 255;
+  }
+  g.putImageData(od, 0, 0);
+  g.filter = `blur(${rand ? rnd(0.6, 2).toFixed(1) : 1}px)`; g.drawImage(c, 0, 0); g.filter = "none";
+  const ga = rand ? rnd(0, 6.28) : 0.9, sh2 = g.createLinearGradient(W / 2 - Math.cos(ga) * 1200, H / 2 - Math.sin(ga) * 1200, W / 2 + Math.cos(ga) * 1200, H / 2 + Math.sin(ga) * 1200);
+  sh2.addColorStop(0, "rgba(0,0,0,0)"); sh2.addColorStop(1, `rgba(0,0,0,${rand ? rnd(0.1, 0.4) : 0.3})`);
+  g.fillStyle = sh2; g.fillRect(0, 0, W, H);
+  if (rand) { g.fillStyle = Math.random() < 0.5 ? `rgba(255,190,110,${rnd(0, 0.12)})` : `rgba(120,160,255,${rnd(0, 0.1)})`; g.fillRect(0, 0, W, H); }   // dominante de couleur
+  window._demoPts = flat.map(([x, y]) => { const q = h[6] * x + h[7] * y + 1; return [(h[0] * x + h[1] * y + h[2]) / q, (h[3] * x + h[4] * y + h[5]) / q]; });
+  window._demoR = list.map(q => q[1]);
+  window._demoTruth = list.map(q => scoreAt(q[1]));
+  return c;
+}
+/* Banc de test : n scènes au hasard, comparaison détection / vérité. */
+window.selfTest = n => {
+  const keep = A, res = []; let extra = 0, noFace = 0;
+  for (let i = 0; i < n; i++) {
+    A = { photo: makeDemo(true), spots: [], hits: [], sel: -1, mode: "hits" }; detect();
+    (window._q = window._q || []).push(A.q);
+    if (A.spots.length !== (S.cfg.face === "tri" ? 3 : 1)) noFace++;
+    const used = new Set();
+    window._demoPts.forEach((p, j) => {
+      let b = -1, bd = 1e9; A.hits.forEach((hh, k) => { const dd = Math.hypot(hh.x - p[0], hh.y - p[1]); if (dd < bd && !used.has(k)) { bd = dd; b = k; } });
+      const loc = b >= 0 ? locate(A.hits[b].x, A.hits[b].y) : null, ok = !!loc && bd / ringPx(A.spots[loc.si]) < 1;
+      if (ok) used.add(b);
+      const hh = ok ? A.hits[b] : null, re = window._demoR[j] - shaftU();
+      res.push({ near: loc ? bd / ringPx(A.spots[loc.si]) : -1, nh: A.hits.length, r: window._demoR[j], truth: window._demoTruth[j], found: ok, err: ok ? bd / ringPx(A.spots[loc.si]) : null, rerr: ok ? loc.r - window._demoR[j] : null,
+        val: ok ? hitVal(hh) : null, unsure: ok && !!hh.unsure, cordon: ok && cordon(hh), tight: Math.abs(re - Math.round(re)) < 0.1 || Math.abs(re - 0.5) < 0.1 });
+    });
+    extra += A.hits.length - used.size;
+  }
+  A = keep; return { res, extra, noFace };
+};
+
+/* Bouton retour Android */
+if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+window.androidBack = () => { if (screen === "home") return false; hdrBack.onclick(); return true; };
+
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "name": "Cible Photo",
+  "short_name": "Cible Photo",
+  "description": "Photographie un blason de tir à l'arc, repère les impacts et note les scores par flèche.",
+  "lang": "fr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#eef2ef",
+  "theme_color": "#1d3b2a",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
