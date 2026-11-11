@@ -39,60 +39,67 @@ public class MainActivity extends Activity {
         s.setAllowFileAccess(true);
         s.setMediaPlaybackRequiresUserGesture(false);   // l'aperçu caméra démarre seul
         web.setWebViewClient(new WebViewClient());
-        web.setWebChromeClient(new WebChromeClient() {
-            /* Visée intégrée : la page demande la caméra (getUserMedia). */
-            @Override
-            public void onPermissionRequest(final PermissionRequest request) {
-                runOnUiThread(() -> {
-                    boolean video = false;
-                    for (String r : request.getResources())
-                        if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(r)) video = true;
-                    if (!video) { request.deny(); return; }
-                    if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                        request.grant(new String[] { PermissionRequest.RESOURCE_VIDEO_CAPTURE });
-                    } else {
-                        camRequest = request;
-                        requestPermissions(new String[] { Manifest.permission.CAMERA }, REQ_CAM_PERM);
-                    }
-                });
-            }
-
-            /* <input type=file> : appareil photo du téléphone (capture) ou galerie. */
-            @Override
-            public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb, FileChooserParams p) {
-                if (pending != null) pending.onReceiveValue(null);
-                pending = cb;
-                cameraUri = null;
-                try {
-                    if (p.isCaptureEnabled() && Build.VERSION.SDK_INT >= 29) {
-                        // La photo est écrite dans la galerie : pas besoin de FileProvider.
-                        ContentValues cv = new ContentValues();
-                        cv.put(MediaStore.Images.Media.DISPLAY_NAME, "cible_" + System.currentTimeMillis() + ".jpg");
-                        cv.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
-                        cameraUri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv);
-                        Intent i = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
-                        i.putExtra(MediaStore.EXTRA_OUTPUT, cameraUri);
-                        i.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                        startActivityForResult(i, REQ_FILE);
-                    } else {
-                        Intent i = new Intent(Intent.ACTION_GET_CONTENT);
-                        i.addCategory(Intent.CATEGORY_OPENABLE);
-                        i.setType("image/*");
-                        startActivityForResult(Intent.createChooser(i, "Choisir une photo"), REQ_FILE);
-                    }
-                } catch (Exception e) {
-                    dropCameraUri();
-                    pending.onReceiveValue(null);
-                    pending = null;
-                    Toast.makeText(MainActivity.this, "Impossible d'ouvrir l'appareil photo ou la galerie", Toast.LENGTH_LONG).show();
-                }
-                return true;
-            }
-        });
+        web.setWebChromeClient(new Chrome(this));
         setContentView(web);
 
         if (savedInstanceState != null) web.restoreState(savedInstanceState);
         else web.loadUrl("file:///android_asset/index.html");
+    }
+
+    /* Classe statique nommée (et non anonyme) : avec un JDK 21, javac ajoute aux classes anonymes
+       un attribut que le d8 des build-tools 34 ne sait pas lire. */
+    private static final class Chrome extends WebChromeClient {
+        private final MainActivity a;
+        Chrome(MainActivity activity) { a = activity; }
+
+        /* Visée intégrée : la page demande la caméra (getUserMedia). */
+        @Override
+        public void onPermissionRequest(final PermissionRequest request) {
+            a.runOnUiThread(() -> {
+                boolean video = false;
+                for (String r : request.getResources())
+                    if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(r)) video = true;
+                if (!video) { request.deny(); return; }
+                if (a.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                    request.grant(new String[] { PermissionRequest.RESOURCE_VIDEO_CAPTURE });
+                } else {
+                    a.camRequest = request;
+                    a.requestPermissions(new String[] { Manifest.permission.CAMERA }, REQ_CAM_PERM);
+                }
+            });
+        }
+
+        /* <input type=file> : appareil photo du téléphone (capture) ou galerie. */
+        @Override
+        public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb, FileChooserParams p) {
+            if (a.pending != null) a.pending.onReceiveValue(null);
+            a.pending = cb;
+            a.cameraUri = null;
+            try {
+                if (p.isCaptureEnabled() && Build.VERSION.SDK_INT >= 29) {
+                    // La photo est écrite dans la galerie : pas besoin de FileProvider.
+                    ContentValues cv = new ContentValues();
+                    cv.put(MediaStore.Images.Media.DISPLAY_NAME, "cible_" + System.currentTimeMillis() + ".jpg");
+                    cv.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
+                    a.cameraUri = a.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv);
+                    Intent i = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+                    i.putExtra(MediaStore.EXTRA_OUTPUT, a.cameraUri);
+                    i.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    a.startActivityForResult(i, REQ_FILE);
+                } else {
+                    Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+                    i.addCategory(Intent.CATEGORY_OPENABLE);
+                    i.setType("image/*");
+                    a.startActivityForResult(Intent.createChooser(i, "Choisir une photo"), REQ_FILE);
+                }
+            } catch (Exception e) {
+                a.dropCameraUri();
+                a.pending.onReceiveValue(null);
+                a.pending = null;
+                Toast.makeText(a, "Impossible d'ouvrir l'appareil photo ou la galerie", Toast.LENGTH_LONG).show();
+            }
+            return true;
+        }
     }
 
     private void dropCameraUri() {
