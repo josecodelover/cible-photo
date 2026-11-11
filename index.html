@@ -43,7 +43,7 @@
   /* Analyse */
   .msg { font-size: .88rem; background: #fff7d6; border-radius: 10px; padding: 8px 10px; }
   .cvwrap { margin: 0 -14px; background: #111; }
-  canvas#cv { display: block; width: 100%; height: min(60vh, 140vw); touch-action: none; }
+  canvas#cv, canvas#zcv { display: block; width: 100%; height: min(60vh, 140vw); touch-action: none; }
   .qual { border-radius: 10px; padding: 9px 11px; margin-bottom: 10px; font-size: .86rem; line-height: 1.35; }
   .qual b { display: block; font-size: .95rem; margin-bottom: 2px; }
   .qual.good { background: #dff3e6; color: #14532d; }
@@ -189,13 +189,23 @@ function locate(x, y) {
 }
 /* Cordon à juger : le bord du tube passe à moins d'un dixième d'anneau d'une ligne.
    À cette distance la photo ne permet pas de trancher, c'est à l'archer de regarder. */
-function cordon(h) {
-  const l = locate(h.x, h.y); if (!l) return false;
-  const F = face(), re = l.r - shaftU(); if (re > F.max + 0.1) return false;
-  if (S.cfg.ten !== "plain" && Math.abs(re - 0.5) < 0.1) return true;
-  return re > 0.9 && Math.abs(re - Math.round(re)) < 0.1;
+/* Position d'un impact avec son rayon corrigé : rz = rayon mesuré sur un gros plan,
+   dr = recalage sur le trait réellement imprimé à côté de l'impact. */
+function hitLoc(h) {
+  const l = locate(h.x, h.y);
+  if (l) { if (h.rz != null) l.r = h.rz; else if (h.dr) l.r = Math.max(0, l.r + h.dr); }
+  return l;
 }
-const hitVal = h => { if (h.ov) return h.ov; const l = locate(h.x, h.y); return l ? scoreAt(l.r) : "M"; };
+/* Marge d'incertitude d'un impact, en largeurs d'anneau : selon la façon dont il a été mesuré. */
+const TOL = { zoom: 0.03, fine: 0.06, raw: 0.1 };
+const hitTol = h => h.rz != null ? h.rzTol || TOL.zoom : h.fine && h.cal && !h.unsure ? TOL.fine : TOL.raw;
+function cordon(h) {
+  const l = hitLoc(h); if (!l) return false;
+  const F = face(), re = l.r - shaftU(), tol = hitTol(h); if (re > F.max + tol) return false;
+  if (S.cfg.ten !== "plain" && Math.abs(re - 0.5) < tol) return true;
+  return re > 0.9 && Math.abs(re - Math.round(re)) < tol;
+}
+const hitVal = h => { if (h.ov) return h.ov; const l = hitLoc(h); return l ? scoreAt(l.r) : "M"; };
 
 /* Ajustement d'ellipse par moindres carrés (conique), avec rejet des points aberrants. */
 function gauss(M) {                       // résout M (n lignes, n+1 colonnes) par pivot de Gauss
@@ -290,7 +300,7 @@ function components(m, w, h) {          // composantes connexes (8 voisins) -> l
 /* ---------- vision : blason ---------- */
 /* Depuis le centre jaune, on lance des rayons et on repère les changements de couleur ;
    une ellipse est ajustée sur chaque frontière (jaune/rouge, rouge/bleu, ...). */
-function fitSpot(cls, d, w, h, cx, cy, ry) {
+function fitSpot(cls, d, w, h, cx, cy, ry, avoid) {
   const F = face(), CODE = { Y: 1, R: 2, B: 3, K: 4 }, NB = F.bounds.length, NR = 160, win = Math.max(2, Math.round(ry * 0.15));
   const L = Math.max(3, Math.round(ry * 0.22)), maxLen = Math.ceil(ry * F.max / 2 * 1.7) + L;
   const pts = F.bounds.map(() => []);
@@ -320,7 +330,7 @@ function fitSpot(cls, d, w, h, cx, cy, ry) {
         const i1 = (y1 * w + x1) * 4, i2 = (y2 * w + x2) * 4, gs = Math.abs(d[i1] - d[i2]) + Math.abs(d[i1 + 1] - d[i2 + 1]) + Math.abs(d[i1 + 2] - d[i2 + 2]);
         if (gs > bg) { bg = gs; bt = t; }
       }
-      pts[b].push([cx + dx * bt, cy + dy * bt]);
+      if (!avoid || !avoid(cx + dx * bt, cy + dy * bt)) pts[b].push([cx + dx * bt, cy + dy * bt]);
       start = found + 1;
     }
   }
@@ -333,7 +343,22 @@ function fitSpot(cls, d, w, h, cx, cy, ry) {
   if (els.length < 2) return null;
   const sz = e => Math.sqrt(e.a * e.b), q = sz(els[1]) / sz(els[0]);
   if (q < 1.5 || q > 2.7 || Math.hypot(els[1].cx - els[0].cx, els[1].cy - els[0].cy) > sz(els[0]) * 0.6) return null;
-  return { els };
+  return { els, seed: [cx, cy, ry] };
+}
+/* Une flèche qui longe une frontière de couleur tire l'ellipse vers elle. Une fois les flèches connues,
+   on réajuste les anneaux sans les points de frontière pris sur une flèche ou son ombre. */
+function refitSpots(cls, d, w, h, spots, hits) {
+  const segs = hits.filter(q => q.fx != null);
+  if (!segs.length) return;
+  spots.forEach((sp, i) => {
+    const m = 2.2 * shaftU() * 2 * ringPx(sp) + 3;
+    const avoid = (x, y) => segs.some(q => {
+      const vx = q.fx - q.x, vy = q.fy - q.y, l2 = vx * vx + vy * vy || 1, t = Math.max(-0.05, Math.min(1.1, ((x - q.x) * vx + (y - q.y) * vy) / l2));
+      return Math.hypot(x - q.x - vx * t, y - q.y - vy * t) < m;
+    });
+    const n = fitSpot(cls, d, w, h, sp.seed[0], sp.seed[1], sp.seed[2], avoid);
+    if (n && n.els.length >= sp.els.length) spots[i] = n;
+  });
 }
 function findSpots(cls, d, w, h) {
   const n = w * h, ym = new Uint8Array(n);
@@ -496,7 +521,7 @@ function findArrows(d, w, h, spots) {
         ex /= ne; ey /= ne; let far = -1, fx = 0, fy = 0;
         for (const i of px) { const x = i % w, y = (i / w) | 0, dd = Math.hypot(x - ex, y - ey); if (dd > far) { far = dd; fx = x; fy = y; } }
         const tx = fx - (fx - ex) / far * g, ty = fy - (fy - ey) / far * g;
-        if (far >= 0.3 * rpx && rAt(tx, ty) < Math.min(F.max + shaftU(), F.dom - 0.45)) { cands.push({ x: tx, y: ty, unsure: false, q: far, ends: [] }); continue; }
+        if (far >= 0.3 * rpx && rAt(tx, ty) < Math.min(F.max + shaftU(), F.dom - 0.45)) { cands.push({ x: tx, y: ty, unsure: false, q: far, ends: [], fx: ex, fy: ey }); continue; }
       }
       stubs.push({ px, cx: sx / px.length, cy: sy / px.length, blob: !lines.length && big >= 0.6 * rpx && big <= 3.5 * rpx && px.length >= 0.35 * bw * bh });
     }
@@ -527,6 +552,10 @@ function findArrows(d, w, h, spots) {
   for (const st of stubs) if (!st.used && st.blob) cands.push({ x: st.cx, y: st.cy, unsure: true, q: 0, ends: [] });   // flèche vue de face
   cands.sort((p, q) => q.q - p.q);
   const kept = cands.filter((c, i) => !cands.slice(0, i).some(o => Math.hypot(o.x - c.x, o.y - c.y) < 0.6 * rpx));   // doublons
+  for (const c of kept) if (c.ends.length === 2) {     // autre bout du tube : donne l'axe pour l'affinage
+    const e = c.ends, far = Math.hypot(e[0][0] - c.x, e[0][1] - c.y) > Math.hypot(e[1][0] - c.x, e[1][1] - c.y) ? e[0] : e[1];
+    c.fx = far[0]; c.fy = far[1];
+  }
   return kept.slice(0, S.cfg.perEnd).sort((p, q) => p.y - q.y || p.x - q.x);
 }
 function ransacLines(xs, ys, tol, minLen, wt) {
@@ -560,6 +589,240 @@ function ransacLines(xs, ys, tol, minLen, wt) {
     }
   }
   return out;
+}
+
+/* ---------- vision : affinage des impacts ---------- */
+/* La détection travaille sur une image réduite : elle situe l'impact à 0,1 ou 0,2 anneau près.
+   L'affinage reprend chaque impact sur la photo en pleine résolution :
+   1. l'axe et la largeur du tube sont mesurés sur ses deux bords ;
+   2. le bout du tube est repéré le long de cet axe, et le centre du trou placé un rayon en retrait
+      (le tube est un cylindre : son bout visible est arrondi, il dépasse le centre d'un rayon) ;
+   3. le rayon est recalé sur le trait réellement imprimé à côté de l'impact. */
+const cdist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+const cmed = L => [0, 1, 2].map(k => med(L.map(c => c[k])));
+/* Lecteur de pixels (interpolation bilinéaire) sur une zone d'un canvas. */
+function sampler(cv, x0, y0, x1, y1) {
+  x0 = Math.max(0, Math.floor(x0)); y0 = Math.max(0, Math.floor(y0));
+  x1 = Math.min(cv.width, Math.ceil(x1)); y1 = Math.min(cv.height, Math.ceil(y1));
+  const w = x1 - x0, h = y1 - y0; if (w < 4 || h < 4) return null;
+  const d = cv.getContext("2d", { willReadFrequently: true }).getImageData(x0, y0, w, h).data;
+  return (x, y) => {
+    x -= x0; y -= y0; if (!(x >= 0 && y >= 0 && x <= w - 1.001 && y <= h - 1.001)) return null;
+    const xi = x | 0, yi = y | 0, fx = x - xi, fy = y - yi, i = (yi * w + xi) * 4, j = i + w * 4, o = [0, 0, 0];
+    for (let k = 0; k < 3; k++) o[k] = (d[i + k] * (1 - fx) + d[i + 4 + k] * fx) * (1 - fy) + (d[j + k] * (1 - fx) + d[j + 4 + k] * fx) * fy;
+    return o;
+  };
+}
+/* Droite y = a + b x par moindres carrés, points aberrants écartés. Renvoie { a, b, idx (points gardés), mad }. */
+function robustLine(xs, ys, floor) {
+  let idx = xs.map((_, i) => i), a = 0, b = 0, mad = 0;
+  for (let it = 0; it < 4; it++) {
+    const n = idx.length; let sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (const i of idx) { sx += xs[i]; sy += ys[i]; sxx += xs[i] * xs[i]; sxy += xs[i] * ys[i]; }
+    const den = n * sxx - sx * sx; if (Math.abs(den) < 1e-9) return null;
+    b = (n * sxy - sx * sy) / den; a = (sy - b * sx) / n;
+    const res = idx.map(i => Math.abs(ys[i] - a - b * xs[i])); mad = med(res);
+    const thr = Math.max(floor, 2.5 * mad), keep = idx.filter((i, j) => res[j] <= thr);
+    if (keep.length === idx.length || keep.length < 4) break;
+    idx = keep;
+  }
+  return { a, b, idx, mad };
+}
+/* Sortie d'un objet le long d'une coupe. ps : distances croissantes depuis l'intérieur · ds : écart de couleur avec l'objet.
+   Renvoie la distance où l'on quitte l'objet, à mi-contraste avec ce qui se trouve juste après.
+   n0 : points sûrement à l'intérieur · back : points de même couleur qui prouvent que l'objet reprend
+   (reflet, trait ou autre flèche qui passe par-dessus) · skip : points de transition à sauter · nb : points de fond examinés. */
+function exitAt(ps, ds, n0, back, skip, nb) {
+  const dIn = med(ds.slice(0, n0)), thr0 = Math.max(25, 3 * dIn + 10);
+  let from = 1;
+  for (;;) {
+    let i0 = -1; for (let i = from; i + 2 < ds.length; i++) if (ds[i] > thr0 && ds[i + 1] > thr0 && ds[i + 2] > thr0) { i0 = i; break; }
+    if (i0 < 0) return null;
+    let re = -1, run = 0;
+    for (let i = i0 + 1; i < ds.length && i < i0 + skip + nb; i++) { run = ds[i] <= thr0 ? run + 1 : 0; if (run >= back) { re = i; break; } }
+    if (re >= 0) { from = re; continue; }
+    const beyond = ds.slice(i0 + skip, i0 + skip + nb); if (beyond.length < Math.min(4, nb)) return null;
+    const dOut = med(beyond); if (dOut - dIn < 25) return null;
+    const thr = dIn + 0.5 * (dOut - dIn);
+    for (let i = Math.max(1, i0 - 6); i + 1 < ds.length; i++) if (ds[i] >= thr && ds[i + 1] >= thr)
+      return ps[i - 1] + (ps[i] - ps[i - 1]) * Math.min(1, Math.max(0, (thr - ds[i - 1]) / Math.max(1e-6, ds[i] - ds[i - 1])));
+    return null;
+  }
+}
+/* Parabole y = a + b x + c x² par moindres carrés, points aberrants écartés. */
+function robustQuad(xs, ys, floor) {
+  let idx = xs.map((_, i) => i), c = null, mad = 0;
+  for (let it = 0; it < 4; it++) {
+    const M = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]];
+    for (const i of idx) { const r = [1, xs[i], xs[i] * xs[i]]; for (let p = 0; p < 3; p++) { for (let q = 0; q < 3; q++) M[p][q] += r[p] * r[q]; M[p][3] += r[p] * ys[i]; } }
+    c = gauss(M); if (!c) return null;
+    const res = idx.map(i => Math.abs(ys[i] - c[0] - c[1] * xs[i] - c[2] * xs[i] * xs[i])); mad = med(res);
+    const thr = Math.max(floor, 2.5 * mad), keep = idx.filter((i, j) => res[j] <= thr);
+    if (keep.length === idx.length || keep.length < 6) break;
+    idx = keep;
+  }
+  return { a: c[0], b: c[1], c: c[2], idx, mad };
+}
+/* px : lecteur de pixels · (tx,ty) : impact estimé · (ux,uy) : direction impact -> encoche
+   rho0 : rayon attendu du tube (px) · P : largeur d'un anneau (px) · len : longueur visible du tube (px).
+   Renvoie le centre du trou, l'axe et le rayon mesurés ; end = faux si le bout du tube ne se détache pas du fond. */
+function refineShaft(px, tx, ty, ux, uy, rho0, P, len, tipErr) {
+  const nx = -uy, ny = ux, s0 = tipErr + 1.2 * rho0, s1 = Math.min(0.6 * len, s0 + 1.6 * P);
+  if (s1 - s0 < Math.max(5, 1.5 * rho0)) return null;
+  // couleur du tube : médiane le long de l'axe estimé
+  const cen = []; for (let k = 0; k < 12; k++) { const s = s0 + (s1 - s0) * k / 11, c = px(tx + ux * s, ty + uy * s); if (c) cen.push(c); }
+  if (cen.length < 6) return null;
+  const c0 = cmed(cen);
+  // 1. coupes en travers du tube : ses deux bords, à mi-contraste avec ce qui le touche de chaque côté
+  const E = 3.2 * rho0 + 0.6 * tipErr + 6, st = Math.max(0.5, rho0 / 12), win = 0.8 * rho0 + 0.5 * tipErr;
+  const n0 = Math.max(2, Math.ceil(0.3 * rho0 / st)), bk = Math.max(2, Math.ceil(0.25 * rho0 / st));
+  const sk = Math.ceil(Math.max(3, 0.35 * rho0) / st), nb = Math.ceil(Math.max(2, 0.5 * rho0) / st);
+  /* Coupe en travers au point (bx,by), le long de (ax,ay) : [décalage du milieu du tube, largeur].
+     cc : couleur du tube · seek : distance sur laquelle on cherche le tube autour du point. */
+  const cut = (bx, by, ax, ay, cc, seek) => {
+    const off = [], dd = [];
+    for (let o = -E; o <= E; o += st) { const c = px(bx + ax * o, by + ay * o); if (!c) return null; off.push(o); dd.push(cdist(c, cc)); }
+    let im = -1; for (let i = 0; i < dd.length; i++) if (Math.abs(off[i]) <= seek && (im < 0 || dd[i] < dd[im])) im = i;
+    if (im < 0 || dd[im] > 40) return null;
+    if (seek > st) { let a = im, b = im; while (a > 0 && dd[a - 1] < dd[im] + 20) a--; while (b < dd.length - 1 && dd[b + 1] < dd[im] + 20) b++; im = (a + b) >> 1; }
+    const side = dir => { const ps = [], ds = []; for (let i = im; i >= 0 && i < dd.length; i += dir) { ps.push(Math.abs(off[i] - off[im])); ds.push(dd[i]); } return exitAt(ps, ds, n0, bk, sk, nb); };
+    const eL = side(-1), eR = side(1);
+    return eL == null || eR == null ? null : [off[im] + (eR - eL) / 2, eL + eR];
+  };
+  const K = 14, cs = [], ws = [], ss = [];
+  for (let k = 0; k < K; k++) {
+    const s = s0 + (s1 - s0) * k / (K - 1), q = cut(tx + ux * s, ty + uy * s, nx, ny, c0, win);
+    if (!q || q[1] < 1.2 * rho0 || q[1] > 3.4 * rho0) continue;   // largeur invraisemblable : le tube se confond avec autre chose
+    cs.push(q[0]); ws.push(q[1]); ss.push(s);
+  }
+  // un trait ou une ombre collés au tube élargissent certaines coupes : on ne garde que celles de largeur concordante
+  const wm = med(ws), okw = ws.map(q => Math.abs(q - wm) <= Math.max(1.5, 0.15 * wm));
+  for (const a of [cs, ss, ws]) { const k = a.filter((q, i) => okw[i]); a.length = 0; a.push(...k); }
+  if (cs.length < 2) return null;
+  // assez de coupes bien étalées : on réajuste aussi la direction ; sinon seulement le décalage latéral
+  let fit = cs.length >= 5 && ss[ss.length - 1] - ss[0] >= 0.5 * P ? robustLine(ss, cs, 0.6) : null;
+  if (!fit || fit.idx.length < 5 || Math.abs(fit.b) > 0.5) fit = { a: med(cs), b: 0, idx: cs.map((_, i) => i) };
+  const rho = med(fit.idx.map(i => ws[i])) / 2;
+  const dl = Math.hypot(1, fit.b), vx = (ux + nx * fit.b) / dl, vy = (uy + ny * fit.b) / dl, ox = tx + nx * fit.a, oy = ty + ny * fit.a;
+  // 2. bout du tube : en remontant l'axe vers l'impact, là où la couleur quitte celle du tube
+  const at = (t, o) => px(ox + vx * t - vy * o, oy + vy * t + vx * o);
+  const inside = []; for (let k = 0; k < 12; k++) { const c = at(s0 + (s1 - s0) * k / 11, 0); if (c) inside.push(c); }
+  const out = { x: ox + vx * rho, y: oy + vy * rho, ux: vx, uy: vy, rho, end: false, dark: false };
+  if (inside.length < 6) return out;
+  const cS = cmed(inside), ps = [], ds = [];
+  out.dark = .299 * cS[0] + .587 * cS[1] + .114 * cS[2] < 90;
+  for (let t = s0; t >= -(4.4 * tipErr + 2 * rho); t -= 0.5) {
+    const c = [at(t, -0.3 * rho), at(t, 0), at(t, 0.3 * rho)]; if (c.some(q => !q)) break;
+    ps.push(s0 - t); ds.push(cdist([0, 1, 2].map(k => (c[0][k] + c[1][k] + c[2][k]) / 3), cS));
+  }
+  const e = exitAt(ps, ds, Math.max(3, Math.ceil(0.5 * s0)), Math.max(4, Math.round(3 * rho)), 2, Math.max(6, Math.round(0.6 * P)));
+  if (e == null) return out;
+  let tc = s0 - e + rho;                  // centre du trou : un rayon en retrait du bout
+  // 3. contrôle par la forme : près du bout, le tube se rétrécit en arrondi. Chaque coupe de cet arrondi donne
+  //    le centre du trou. Si un trait sombre touche presque un tube sombre, le bout paraît plus loin qu'il n'est :
+  //    l'arrondi, lui, n'est pas faussé.
+  const est = [];
+  for (let t = tc - 0.88 * rho; t <= tc + 0.6 * rho; t += Math.max(0.5, 0.04 * rho)) {
+    const q = cut(ox + vx * t, oy + vy * t, -vy, vx, cS, st);
+    if (!q || Math.abs(q[0]) > 0.25 * rho + 1) continue;
+    const hw = q[1] / 2; if (hw >= 0.5 * rho && hw <= 0.95 * rho) est.push(t + Math.sqrt(rho * rho - hw * hw));
+  }
+  if (est.length >= 4) {
+    const m = med(est);
+    if (med(est.map(q => Math.abs(q - m))) <= Math.max(0.6, 0.1 * rho) && m - tc > Math.max(1, 0.1 * rho)) tc = m;
+  }
+  // le tube doit se voir aussi sur les côtés juste derrière son bout (sinon : tube noir dans le noir, bout non fiable)
+  let seen = 0;
+  for (let k = 0; k <= 6; k++) { const q = cut(ox + vx * (tc + 0.2 * k * rho), oy + vy * (tc + 0.2 * k * rho), -vy, vx, cS, st); if (q && Math.abs(q[1] - 2 * rho) <= 0.5 * rho) seen++; }
+  out.x = ox + vx * tc; out.y = oy + vy * tc; out.end = seen >= 3;
+  return out;
+}
+/* Écart entre le trait imprimé de rayon Rl et le modèle d'anneaux, mesuré de part et d'autre de l'impact
+   (en anneaux, positif si le trait est plus loin du centre que prévu). shafts : tubes à éviter.
+   lin : le modèle peut être tourné (gros plan) -> on extrapole l'écart jusqu'à l'impact au lieu de le moyenner. */
+function ringOffset(px, sp, x, y, Rl, P, rho, shafts, lin) {
+  const F = face(), e = ellAt(sp, Rl), c = Math.cos(e.th), s = Math.sin(e.th);
+  const phi = Math.atan2((-(x - e.cx) * s + (y - e.cy) * c) / e.b, ((x - e.cx) * c + (y - e.cy) * s) / e.a);
+  const isCol = F.bounds.some(b => b[1] === Rl), Hh = (lin ? 0.35 : 0.3) * P, st = Math.max(0.5, Hh / 40);
+  const gw = Math.max(2, Math.round(0.03 * P / st)), dsr = Math.hypot(e.a * Math.sin(phi), e.b * Math.cos(phi));
+  const amax = Math.min(1.8 * P, 1.1 * Math.sqrt(e.a * e.b)), amin = Math.min(0.7 * amax, Math.max(2.2 * rho + 2, 0.22 * P));
+  const as = [], dv = [];
+  const NS = lin ? 11 : 7;
+  for (const sg of [-1, 1]) for (let j = 0; j < NS; j++) {
+    const a = sg * (amin + (amax - amin) * j / (NS - 1)), f = phi + a / dsr, ex = e.a * Math.cos(f), ey = e.b * Math.sin(f);
+    const qx = e.cx + ex * c - ey * s, qy = e.cy + ex * s + ey * c;
+    let mx = Math.cos(f) / e.a, my = Math.sin(f) / e.b; const ml = Math.hypot(mx, my); mx /= ml; my /= ml;
+    const ox = mx * c - my * s, oy = mx * s + my * c;   // normale sortante
+    // coupe qui passe sur un tube : inutilisable
+    if (shafts.some(q => [-1, -0.5, 0, 0.5, 1].some(v => {
+      const X = qx + ox * v * Hh, Y = qy + oy * v * Hh, t = Math.max(0, Math.min(q.len * 1.1, (X - q.x) * q.ux + (Y - q.y) * q.uy));
+      return Math.hypot(X - q.x - q.ux * t, Y - q.y - q.uy * t) < 1.3 * q.rho + 0.25 * Hh + 2;
+    }))) continue;
+    const col = []; for (let v = -Hh; v <= Hh; v += st) { const k = px(qx + ox * v, qy + oy * v); if (!k) break; col.push(k); }
+    const n = col.length; if (n < 2 * Hh / st) continue;
+    let sig, lo;
+    if (isCol) { sig = col.map((k, i) => i < gw || i >= n - gw ? 0 : cdist(col[i + gw], col[i - gw])); lo = 40; }
+    else {
+      const base = cmed(col); sig = col.map(k => cdist(k, base)); lo = 22;
+      if (cdist(cmed(col.slice(0, 4)), cmed(col.slice(-4))) > 30) continue;      // pas la même couleur des deux côtés : autre chose qu'un trait
+    }
+    let ip = 0; for (let i = 1; i < n; i++) if (sig[i] > sig[ip]) ip = i;
+    if (sig[ip] < lo) continue;
+    let i0 = ip, i1 = ip; const half = sig[ip] / 2;
+    while (i0 > 0 && sig[i0 - 1] >= half) i0--; while (i1 < n - 1 && sig[i1 + 1] >= half) i1++;
+    if (i0 === 0 || i1 === n - 1 || (!isCol && (i1 - i0) * st > Math.max(4, 0.2 * P))) continue;
+    let sw = 0, sv = 0; for (let i = i0; i <= i1; i++) { sw += sig[i] - half; sv += (sig[i] - half) * i; }
+    const v = -Hh + st * (sw ? sv / sw : ip);
+    as.push(a / P); dv.push(radius(sp, qx + ox * v, qy + oy * v) - Rl);
+  }
+  let d = null, slope = 0, curv = 0;
+  if (lin) {
+    // gros plan : le modèle peut être tourné et à une échelle un peu fausse -> l'écart varie le long du trait
+    // (pente, courbure) ; on ajuste cette variation et on lit l'écart à l'endroit de l'impact
+    if (as.length < 6) return null;
+    const fit = robustQuad(as, dv, 0.01); if (!fit || fit.idx.length < 6 || fit.mad > 0.02) return null;
+    const both = fit.idx.some(i => as[i] < 0) && fit.idx.some(i => as[i] > 0);
+    if (!both && fit.mad > 0.008) return null;      // un seul côté visible : on n'extrapole que si le trait est très net
+    d = fit.a; slope = fit.b; curv = fit.c;
+  } else {
+    const L = dv.filter((q, i) => as[i] < 0), R = dv.filter((q, i) => as[i] > 0);
+    if (L.length >= 2 && R.length >= 2) d = (med(L) + med(R)) / 2;
+    else if (Math.max(L.length, R.length) >= 3) d = med(L.length > R.length ? L : R);
+    else return null;
+    if (med(dv.map(q => Math.abs(q - d))) > 0.05) return null;
+  }
+  return Math.abs(d) < 0.9 * Hh / P ? { d, slope, curv } : null;
+}
+/* Trait qui décide de la valeur d'un impact : le plus proche du bord du tube. */
+function nearLine(r) {
+  const re = r - shaftU();
+  return S.cfg.ten !== "plain" && re < 0.75 ? 0.5 : Math.min(face().max, Math.max(1, Math.round(re)));
+}
+/* Recale le rayon d'un impact sur le trait imprimé voisin. */
+function calib(h) {
+  h.dr = 0; h.cal = false;
+  const l = locate(h.x, h.y); if (!l || l.r - shaftU() > face().max + 0.4) return;
+  const sp = A.spots[l.si], P = ringPx(sp), rho = h.ax ? h.ax.rho : shaftU() * P, m = 2.4 * P + 8;
+  const px = sampler(A.photo, h.x - m, h.y - m, h.x + m, h.y + m); if (!px || P < 12) return;
+  const shafts = A.hits.filter(q => q.ax).map(q => ({ x: q.x, y: q.y, ...q.ax }));
+  const o = ringOffset(px, sp, h.x, h.y, nearLine(l.r), P, rho, shafts, false);
+  if (o) { h.dr = -o.d; h.cal = true; }
+}
+function refineHits() {
+  for (const h of A.hits) {
+    const l = locate(h.x, h.y); if (!l || h.fx == null) continue;
+    const P = ringPx(A.spots[l.si]), rho0 = shaftU() * P, len = Math.hypot(h.fx - h.x, h.fy - h.y); if (len < 4) continue;
+    const ux = (h.fx - h.x) / len, uy = (h.fy - h.y) / len, m = 2.4 * P + 4.5 * rho0 + 8;
+    const px = sampler(A.photo, h.x - m, h.y - m, h.x + m, h.y + m);
+    const f = px && refineShaft(px, h.x, h.y, ux, uy, rho0, P, len, 0.25 * P);
+    if (f) { h.x = f.x; h.y = f.y; h.fine = f.end; h.ax = { ux: f.ux, uy: f.uy, rho: f.rho, len }; }
+    else { h.x += ux * rho0; h.y += uy * rho0; h.ax = { ux, uy, rho: rho0, len }; }   // au moins le retrait d'un rayon
+    // tube sombre arrivant dans la zone noire : son bout ne se distingue pas du fond, la position reste à vérifier
+    if (face().bounds.some(b => b[0] === "K") && (!f || f.dark)) {
+      const r = locate(h.x, h.y).r; if (r > 5.8 && r < 8.8) { h.unsure = true; h.fine = false; }
+    }
+  }
+  for (const h of A.hits) calib(h);
 }
 
 /* ---------- contrôle de la photo ---------- */
@@ -608,12 +871,14 @@ function detect() {
   const c = document.createElement("canvas"); c.width = w; c.height = h;
   const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(ph, 0, 0, w, h);
   const d = g.getImageData(0, 0, w, h).data;
-  const spots = findSpots(classify(d, w * h), d, w, h);
+  const cls = classify(d, w * h), spots = findSpots(cls, d, w, h);
   const hits = spots.length ? findArrows(d, w, h, spots) : [];
+  if (!window._noRefine) refitSpots(cls, d, w, h, spots, hits);
   A.q = quality(d, w, h, spots, k);
   for (const sp of spots) for (const e of sp.els) { e.cx /= k; e.cy /= k; e.a /= k; e.b /= k; }
   A.spots = spots; A.sel = -1;
-  A.hits = hits.map(q => ({ x: q.x / k, y: q.y / k, unsure: q.unsure, ov: null }));
+  A.hits = hits.map(q => ({ x: q.x / k, y: q.y / k, unsure: q.unsure, ov: null, fx: q.fx == null ? null : q.fx / k, fy: q.fy == null ? null : q.fy / k }));
+  if (!window._noRefine) refineHits();
   const F = face(), nu = A.hits.filter(q => q.unsure).length;
   A.msg = !spots.length ? `Blason non reconnu. Passez par « Ajuster le blason » pour le placer à la main.`
     : `${F.name} : ${spots.length} ${spots.length > 1 ? "centres repérés" : "centre repéré"}, ${A.hits.length} impact${A.hits.length > 1 ? "s" : ""} proposé${A.hits.length > 1 ? "s" : ""}`
@@ -624,16 +889,22 @@ function manualSpots() {
   if (S.cfg.face === "tri") { const r = Math.min(H / 7.2, W / 2.6); A.spots = [-1, 0, 1].map(i => ({ els: [{ R: F.max, cx: W / 2, cy: H / 2 + i * r * 2.25, a: r, b: r, th: 0 }] })); }
   else { const r = Math.min(W, H) * 0.42; A.spots = [{ els: [{ R: F.max, cx: W / 2, cy: H / 2, a: r, b: r, th: 0 }] }]; }
 }
-async function openPhoto(src) {
+/* Charge une image (fichier ou canvas) dans un canvas de travail. On garde jusqu'à 2800 px :
+   l'affinage des impacts se fait en pleine résolution. */
+async function loadPhoto(src) {
   let bmp = src;
   if (src instanceof Blob) {
     try { bmp = await createImageBitmap(src, { imageOrientation: "from-image" }); }
     catch { bmp = await new Promise((ok, ko) => { const im = new Image(); im.onload = () => ok(im); im.onerror = ko; im.src = URL.createObjectURL(src); }); }
   }
-  const k = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
+  const k = Math.min(1, 2800 / Math.max(bmp.width, bmp.height));
   const ph = document.createElement("canvas"); ph.width = Math.round(bmp.width * k); ph.height = Math.round(bmp.height * k);
-  ph.getContext("2d").drawImage(bmp, 0, 0, ph.width, ph.height);
+  ph.getContext("2d", { willReadFrequently: true }).drawImage(bmp, 0, 0, ph.width, ph.height);
   if (bmp.close) bmp.close();
+  return ph;
+}
+async function openPhoto(src) {
+  const ph = await loadPhoto(src);
   A = { photo: ph, spots: [], hits: [], sel: -1, mode: "hits", view: null, msg: "Analyse en cours…", drag: null };
   screen = "analyse"; render();
   setTimeout(() => {
@@ -643,18 +914,21 @@ async function openPhoto(src) {
 }
 for (const id of ["#fCam", "#fGal"]) $(id).onchange = e => {
   const f = e.target.files[0]; e.target.value = "";
-  if (f) { stopCamera(); openPhoto(f).catch(() => alert("Impossible de lire cette image.")); }
+  if (!f) return;
+  if (zoomFor != null && A) openZoom(f).catch(() => alert("Impossible de lire cette image."));     // gros plan d'une flèche
+  else { stopCamera(); openPhoto(f).catch(() => alert("Impossible de lire cette image.")); }
 };
 
 /* ---------- rendu ---------- */
 function render() {
   hdrBack.classList.toggle("hidden", screen === "home");
-  ({ home: renderHome, analyse: renderAnalyse, group: renderGroup, camera: renderCamera })[screen]();
+  ({ home: renderHome, analyse: renderAnalyse, group: renderGroup, camera: renderCamera, zoomask: renderZoomAsk, zoom: renderZoom })[screen]();
   window.scrollTo(0, 0);
 }
 hdrBack.onclick = () => {
+  if (screen === "zoomask" || screen === "zoom") return leaveZoom();        // retour à la photo d'ensemble
   if (screen === "analyse" && A && A.hits.length && !confirm("Abandonner cette photo ?")) return;
-  stopCamera(); screen = "home"; A = null; render();
+  stopCamera(); screen = "home"; A = null; zoomFor = null; render();
 };
 const seg = (id, opts, cur) => `<div class="seg" id="${id}">${opts.map(([v, t]) => `<button data-v="${v}" class="${String(v) === String(cur) ? "on" : ""}">${t}</button>`).join("")}</div>`;
 const minis = arr => [...arr].sort((p, q) => ord(q.v) - ord(p.v)).map(a => `<span class="mini z-${a.v}">${a.v}</span>`).join("");
@@ -791,7 +1065,7 @@ function renderPanel() {
       $("#pAdd").onclick = () => { if (!A.spots.length) manualSpots(); else if (A.spots.length < 6) { const o = outer(A.spots[A.spots.length - 1]); A.spots.push({ els: [{ ...o, cx: A.photo.width / 2, cy: A.photo.height / 2 }] }); } draw(); };
       $("#pDel").onclick = () => { A.spots.pop(); draw(); };
     }
-    $("#pDone").onclick = () => { A.mode = "hits"; if (A.spots.length && A.msg.startsWith("Blason non")) A.msg = "Touchez la photo à l'endroit de chaque impact, puis glissez le repère pour l'ajuster."; renderPanel(); draw(); };
+    $("#pDone").onclick = () => { A.mode = "hits"; A.hits.forEach(h => { h.rz = null; calib(h); }); if (A.spots.length && A.msg.startsWith("Blason non")) A.msg = "Touchez la photo à l'endroit de chaque impact, puis glissez le repère pour l'ajuster."; renderPanel(); draw(); };
     return;
   }
   const vals = A.hits.map(hitVal), tot = vals.reduce((s, v) => s + val(v), 0), sel = A.hits[A.sel];
@@ -803,12 +1077,13 @@ function renderPanel() {
       ${Q.ok && !Q.warn.length ? "" : `<button class="btn sm ${Q.ok ? "sec" : ""}" id="pRetake" style="margin-top:8px">📷 Reprendre la photo</button>`}
     </div>` : ""}
     <div class="chips" style="margin-bottom:10px">
-      ${vals.map((v, i) => `<button class="chip z-${v} ${i === A.sel ? "sel" : ""}" data-i="${i}"><small>n° ${i + 1}${A.hits[i].ov ? " ✎" : cordon(A.hits[i]) ? " ⚠ cordon" : ""}</small>${v}</button>`).join("") || `<span class="hint">Aucun impact : touchez la photo pour en placer un.</span>`}
+      ${vals.map((v, i) => `<button class="chip z-${v} ${i === A.sel ? "sel" : ""}" data-i="${i}"><small>n° ${i + 1}${A.hits[i].ov ? " ✎" : cordon(A.hits[i]) ? " ⚠ cordon" : A.hits[i].rz != null ? " 🔍" : ""}</small>${v}</button>`).join("") || `<span class="hint">Aucun impact : touchez la photo pour en placer un.</span>`}
       <div class="tot">Total<b>${tot}</b></div>
     </div>
-    ${A.hits.some(h => !h.ov && cordon(h)) ? `<div class="hint" style="margin-bottom:10px">⚠ cordon : la flèche est à moins de ${(S.cfg.diam / 20).toFixed(0)} mm d'une ligne, la photo ne suffit pas pour trancher. Zoomez, regardez la cible, puis fixez la valeur avec « Valeur − / ＋ ».</div>` : ""}
+    ${A.hits.some(h => !h.ov && cordon(h)) ? `<div class="hint" style="margin-bottom:10px">⚠ cordon : le tube passe trop près d'une ligne pour que cette photo permette de trancher. Sélectionnez la flèche puis prenez-la en <b>gros plan</b>, ou regardez la cible et fixez la valeur avec « Valeur − / ＋ ».</div>` : ""}
     ${sel ? `<div class="row" style="margin-bottom:10px">
-      <button class="btn sec sm" id="pMinus">Valeur −</button><button class="btn sec sm" id="pPlus">Valeur ＋</button><button class="btn sec sm" id="pRem">Supprimer</button></div>` : ""}
+      <button class="btn sec sm" id="pMinus">Valeur −</button><button class="btn sec sm" id="pPlus">Valeur ＋</button><button class="btn sec sm" id="pRem">Supprimer</button></div>
+      <button class="btn sm ${!sel.ov && cordon(sel) ? "" : "sec"}" id="pZoom" style="margin-bottom:10px">🔍 Gros plan de la flèche n° ${A.sel + 1}</button>` : ""}
     <div class="row" style="margin-bottom:10px">
       <button class="btn sec sm" id="pFace">Ajuster le blason</button><button class="btn sec sm" id="pRedo">Relancer l'analyse</button>
     </div>
@@ -816,8 +1091,9 @@ function renderPanel() {
   if ($("#pRetake")) $("#pRetake").onclick = startCamera;
   p.querySelectorAll(".chip").forEach(b => b.onclick = () => { A.sel = A.sel === +b.dataset.i ? -1 : +b.dataset.i; renderPanel(); draw(); });
   if (sel) {
-    const bump = d => { const l = ladder(), i = l.indexOf(hitVal(sel)), j = Math.max(0, Math.min(l.length - 1, i + d)); const loc = locate(sel.x, sel.y); sel.ov = loc && scoreAt(loc.r) === l[j] ? null : l[j]; renderPanel(); draw(); };
+    const bump = d => { const l = ladder(), i = l.indexOf(hitVal(sel)), j = Math.max(0, Math.min(l.length - 1, i + d)); const loc = hitLoc(sel); sel.ov = loc && scoreAt(loc.r) === l[j] ? null : l[j]; renderPanel(); draw(); };
     $("#pMinus").onclick = () => bump(-1); $("#pPlus").onclick = () => bump(1);
+    $("#pZoom").onclick = () => askZoom(A.sel);
     $("#pRem").onclick = () => { A.hits.splice(A.sel, 1); A.sel = -1; renderPanel(); draw(); };
   }
   $("#pFace").onclick = () => { if (!A.spots.length) manualSpots(); A.mode = "face"; A.sel = -1; renderPanel(); draw(); };
@@ -928,7 +1204,7 @@ function bindCanvas(cv) {
       const dx = (p.x - G.start.x) / A.view.s, dy = (p.y - G.start.y) / A.view.s, t = G.t;
       if (t.kind === "hit") {
         const h = A.hits[t.i]; h.x = t.ox + dx; h.y = t.oy + dy;
-        if (dx || dy) { h.ov = null; h.unsure = false; }
+        if (dx || dy) { h.ov = null; h.unsure = false; h.fine = false; h.ax = null; h.rz = null; h.dr = 0; h.cal = false; t.moved = true; }
         A.drag.fx = p.x; renderPanel();
       } else {
         const sp = A.spots[t.si];
@@ -947,13 +1223,164 @@ function bindCanvas(cv) {
     pts.delete(e.pointerId);
     if (G && G.type === "tap" && e.type === "pointerup" && A.mode === "hits") {
       if (!A.spots.length) alert("Placez d'abord le blason (« Ajuster le blason »).");
-      else if (A.hits.length < 12) { const q = toPhoto(G.start); A.hits.push({ x: q.x, y: q.y, ov: null }); A.sel = A.hits.length - 1; }
+      else if (A.hits.length < 12) { const q = toPhoto(G.start), nh = { x: q.x, y: q.y, ov: null }; A.hits.push(nh); A.sel = A.hits.length - 1; calib(nh); }
     }
+    if (G && G.type === "drag" && G.t.kind === "hit" && G.t.moved && A.hits[G.t.i]) calib(A.hits[G.t.i]);   // repère déplacé : recalage sur le trait voisin
     if (!pts.size) { G = null; A.drag = null; renderPanel(); } else if (G && G.type === "pinch") G = { type: "none" };
     draw();
   };
   cv.onpointerup = up; cv.onpointercancel = up;
   cv.onwheel = e => { e.preventDefault(); zoomAt(pos(e), A.view.s * (e.deltaY < 0 ? 1.2 : 1 / 1.2)); draw(); };
+}
+
+/* ---------- gros plan d'une flèche ---------- */
+/* Pour un cordon que la photo d'ensemble ne permet pas de trancher : une seconde photo, prise de près.
+   L'archer touche le tube ; l'application mesure alors directement, sur le gros plan, l'écart entre
+   le bord du tube et le trait imprimé. La photo d'ensemble sert seulement à savoir de quel trait il s'agit. */
+let Z = null, zoomFor = null;
+function askZoom(i) { zoomFor = i; Z = null; screen = "zoomask"; render(); }
+function leaveZoom() { Z = null; zoomFor = null; screen = "analyse"; render(); }
+function renderZoomAsk() {
+  app.innerHTML = `<div class="card"><h2>Gros plan de la flèche n° ${zoomFor + 1}</h2>
+    <ol class="steps" style="margin-top:0">
+      <li>Approchez le téléphone à 20 ou 30 cm de la flèche.</li>
+      <li>Restez presque de face : décalez-vous juste assez pour voir l'endroit où le tube entre dans la cible.</li>
+      <li>Cadrez le point d'impact au milieu, avec le trait du cordon visible <b>de chaque côté du tube</b>.</li>
+      <li>Attendez que l'image soit nette, puis déclenchez.</li>
+    </ol>
+    <div class="row" style="margin-top:12px"><button class="btn" id="zCam">📷 Photographier</button><button class="btn sec" id="zGal">🖼 Galerie</button></div>
+    <button class="btn sec" id="zNo" style="margin-top:10px">Annuler</button></div>`;
+  $("#zCam").onclick = () => $("#fCam").click();
+  $("#zGal").onclick = () => $("#fGal").click();
+  $("#zNo").onclick = leaveZoom;
+}
+async function openZoom(src) {
+  Z = { i: zoomFor, photo: await loadPhoto(src), stage: "tap", res: null, msg: "" };
+  screen = "zoom"; render();
+}
+function zoomView() {
+  const cv = Z.cv, cw = cv.clientWidth, ch = cv.clientHeight, ph = Z.photo, fit = Math.min(cw / ph.width, ch / ph.height), R = Z.res;
+  if (Z.stage !== "done" || !R) return { s: fit, ox: (cw - ph.width * fit) / 2, oy: (ch - ph.height * fit) / 2 };
+  // résultat : vue serrée sur l'impact, assez large pour montrer aussi le cordon mesuré
+  const s = Math.max(fit, Math.min(cw, ch) / Math.max(12 * R.rho, 1.2 * R.P, 2.6 * (Math.abs(R.r - R.Rl) * R.P + R.rho)));
+  return { s, ox: cw / 2 - R.x * s, oy: ch / 2 - R.y * s };
+}
+function renderZoom() {
+  app.innerHTML = `<div class="msg" id="zmsg"></div><div class="cvwrap"><canvas id="zcv"></canvas></div><div id="zpanel"></div>`;
+  const cv = $("#zcv"), dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(cv.clientWidth * dpr); cv.height = Math.round(cv.clientHeight * dpr); Z.cv = cv;
+  cv.onpointerup = e => {
+    if (Z.stage === "done") return;
+    const r = cv.getBoundingClientRect(), V = zoomView(), x = (e.clientX - r.left - V.ox) / V.s, y = (e.clientY - r.top - V.oy) / V.s;
+    if (x < 0 || y < 0 || x >= Z.photo.width || y >= Z.photo.height) return;
+    $("#zmsg").textContent = "Mesure en cours…";
+    setTimeout(() => {
+      try { zoomAnalyse(x, y); } catch (err) { console.error(err); Z.stage = "fail"; Z.msg = "La mesure a échoué sur cette photo."; }
+      zoomPanel(); drawZoom();
+    }, 30);
+  };
+  zoomPanel(); drawZoom();
+}
+function zoomPanel() {
+  const n = Z.i + 1, R = Z.res;
+  $("#zmsg").textContent = Z.stage === "tap" ? `Touchez le tube de la flèche n° ${n}, tout près de l'endroit où il entre dans la cible.` : Z.stage === "fail" ? Z.msg : R.text;
+  $("#zpanel").innerHTML = (Z.stage === "done" ? `<div class="hint" style="margin:10px 0">Cercle rose : le tube à son entrée dans la cible. Trait vert : le cordon repéré. Si l'un des deux est mal placé, désignez le tube à nouveau ou refaites la photo.</div>
+      <button class="btn" id="zOk">Retenir ${R.val} pour la flèche n° ${n}</button>` : "")
+    + `<div class="row" style="margin-top:10px">${Z.stage !== "tap" ? `<button class="btn sec sm" id="zTap">Désigner le tube</button>` : ""}<button class="btn sec sm" id="zNew">Autre photo</button><button class="btn sec sm" id="zNo">Annuler</button></div>`;
+  if ($("#zOk")) $("#zOk").onclick = () => { const h = A.hits[Z.i]; h.rz = R.r; h.rzTol = R.tol; h.ov = null; h.unsure = false; A.sel = Z.i; leaveZoom(); };
+  if ($("#zTap")) $("#zTap").onclick = () => { Z.stage = "tap"; Z.res = null; zoomPanel(); drawZoom(); };
+  $("#zNew").onclick = () => askZoom(Z.i);
+  $("#zNo").onclick = leaveZoom;
+}
+function drawZoom() {
+  const cv = Z.cv, g = cv.getContext("2d"), dpr = window.devicePixelRatio || 1, V = zoomView(), px = 1 / V.s, R = Z.res;
+  g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = "#111"; g.fillRect(0, 0, cv.width, cv.height);
+  g.setTransform(dpr * V.s, 0, 0, dpr * V.s, dpr * V.ox, dpr * V.oy); g.drawImage(Z.photo, 0, 0);
+  if (Z.stage !== "done" || !R) return;
+  g.beginPath();                                   // le cordon, tel qu'il a été repéré de part et d'autre du tube
+  for (let j = 0; j <= 40; j++) {
+    const a = -1.6 + 3.2 * j / 40, e = ellAt(R.sp, R.Rl + R.delta + R.slope * a + R.curv * a * a), f = R.phi + a * R.P / R.dsr, ex = e.a * Math.cos(f), ey = e.b * Math.sin(f), c = Math.cos(e.th), s = Math.sin(e.th);
+    g[j ? "lineTo" : "moveTo"](e.cx + ex * c - ey * s, e.cy + ex * s + ey * c);
+  }
+  g.lineWidth = 2 * px; g.strokeStyle = "#00ffaa"; g.stroke();
+  g.beginPath(); g.arc(R.x, R.y, R.rho, 0, 7); g.lineWidth = 4 * px; g.strokeStyle = "rgba(0,0,0,.6)"; g.stroke();
+  g.lineWidth = 2 * px; g.strokeStyle = "#ff2fb0"; g.stroke();
+  g.beginPath(); g.moveTo(R.x - 5 * px, R.y); g.lineTo(R.x + 5 * px, R.y); g.moveTo(R.x, R.y - 5 * px); g.lineTo(R.x, R.y + 5 * px); g.lineWidth = px; g.stroke();
+}
+/* Le tube autour du point touché : tache de même couleur, allongée. Renvoie son bout côté cible, sa direction et son rayon (px). */
+function tubeAt(ph, sx, sy) {
+  const k = Math.min(1, 640 / Math.max(ph.width, ph.height)), w = Math.round(ph.width * k), h = Math.round(ph.height * k);
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(ph, 0, 0, w, h);
+  const d = g.getImageData(0, 0, w, h).data, x0 = Math.min(w - 3, Math.max(2, Math.round(sx * k))), y0 = Math.min(h - 3, Math.max(2, Math.round(sy * k)));
+  const near = []; for (let y = y0 - 2; y <= y0 + 2; y++) for (let x = x0 - 2; x <= x0 + 2; x++) { const i = (y * w + x) * 4; near.push([d[i], d[i + 1], d[i + 2]]); }
+  const c0 = cmed(near);
+  for (const T of [45, 30]) {
+    let M = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) if (Math.hypot(d[i * 4] - c0[0], d[i * 4 + 1] - c0[1], d[i * 4 + 2] - c0[2]) < T) M[i] = 1;
+    if (!M[y0 * w + x0]) continue;
+    // largeur du tube au point touché : la plus courte traversée de la tache, toutes directions confondues
+    let wt = 1e9;
+    for (let q = 0; q < 16; q++) {
+      const dx = Math.cos(q * Math.PI / 16), dy = Math.sin(q * Math.PI / 16); let n = 1;
+      for (const sg of [-1, 1]) for (let t = 1; t < 400; t++) { const X = Math.round(x0 + sg * dx * t), Y = Math.round(y0 + sg * dy * t); if (X < 0 || Y < 0 || X >= w || Y >= h || !M[Y * w + X]) break; n++; }
+      if (n < wt) wt = n;
+    }
+    // érosion : les traits imprimés de la même couleur que le tube, bien plus fins que lui, ne doivent pas y être rattachés
+    const er = Math.max(1, Math.round(0.25 * wt)); M = morph(M, w, h, er, false);
+    let sd = -1, bd = 1e9; for (let y = Math.max(0, y0 - wt); y <= Math.min(h - 1, y0 + wt); y++) for (let x = Math.max(0, x0 - wt); x <= Math.min(w - 1, x0 + wt); x++) if (M[y * w + x]) { const q = Math.hypot(x - x0, y - y0); if (q < bd) { bd = q; sd = y * w + x; } }
+    if (sd < 0) continue;
+    const seen = new Uint8Array(w * h), stack = [sd], px = []; seen[sd] = 1;
+    while (stack.length && px.length <= 0.25 * w * h) {
+      const i = stack.pop(), x = i % w, y = (i / w) | 0; px.push(i);
+      for (const [X, Y] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
+        if (X < 0 || Y < 0 || X >= w || Y >= h) continue;
+        const j = Y * w + X; if (!seen[j] && M[j]) { seen[j] = 1; stack.push(j); }
+      }
+    }
+    if (px.length < 12 || px.length > 0.25 * w * h) continue;
+    let mx = 0, my = 0; for (const i of px) { mx += i % w; my += (i / w) | 0; } mx /= px.length; my /= px.length;
+    let xx = 0, yy = 0, xy = 0; for (const i of px) { const dx = i % w - mx, dy = ((i / w) | 0) - my; xx += dx * dx; yy += dy * dy; xy += dx * dy; }
+    xx /= px.length; yy /= px.length; xy /= px.length;
+    const ang = 0.5 * Math.atan2(2 * xy, xx - yy), ux = Math.cos(ang), uy = Math.sin(ang), hd = Math.hypot((xx - yy) / 2, xy), l1 = (xx + yy) / 2 + hd, l2 = Math.max(0.08, (xx + yy) / 2 - hd);
+    if (l1 < 9 * l2) continue;                     // pas assez allongé : la couleur a débordé sur le fond
+    const ts = Float64Array.from(px, i => (i % w - mx) * ux + (((i / w) | 0) - my) * uy).sort();
+    const t0 = ts[Math.floor(0.01 * ts.length)], t1 = ts[Math.floor(0.99 * ts.length)], tsd = (x0 - mx) * ux + (y0 - my) * uy;
+    const edge = t => { const x = mx + ux * t, y = my + uy * t, b = er + 4; return x < b || y < b || x > w - 1 - b || y > h - 1 - b; };
+    // le bout planté : celui qui ne sort pas de l'image ; à défaut, le plus proche du point touché
+    const tip = edge(t0) !== edge(t1) ? (edge(t0) ? t1 : t0) : Math.abs(tsd - t0) < Math.abs(tsd - t1) ? t0 : t1, sg = tip === t0 ? 1 : -1;
+    return { x: (mx + ux * (tip - sg * er)) / k, y: (my + uy * (tip - sg * er)) / k, ux: ux * sg, uy: uy * sg, rho: (Math.sqrt(3 * l2) + er) / k, len: (t1 - t0 + 2 * er) / k };
+  }
+  return null;
+}
+function zoomAnalyse(sx, sy) {
+  const fail = m => { Z.stage = "fail"; Z.res = null; Z.msg = m; };
+  const h = A.hits[Z.i], l = locate(h.x, h.y), ph = Z.photo, su = shaftU();
+  if (!l) return fail("Cette flèche n'est plus sur le blason de la photo d'ensemble.");
+  const t = tubeAt(ph, sx, sy);
+  if (!t) return fail("Le tube ne se distingue pas assez du fond à cet endroit. Touchez-le ailleurs, ou jugez ce cordon sur la cible.");
+  let P = t.rho / su; const m = 2.4 * P + 6 * t.rho + 12;
+  const px = sampler(ph, t.x - m, t.y - m, t.x + m, t.y + m);
+  const f = px && refineShaft(px, t.x, t.y, t.ux, t.uy, t.rho, P, t.len, t.rho);
+  if (!f || !f.end) return fail("Le bout du tube n'est pas assez net sur cette photo. Refaites-la d'un peu plus loin, ou en vous décalant pour mieux voir l'impact.");
+  P = f.rho / su;
+  // modèle d'anneaux du gros plan : celui de la photo d'ensemble, mis à l'échelle du tube et posé sur l'impact
+  const sp = A.spots[l.si], rw = radius(sp, h.x, h.y);
+  const gx = (radius(sp, h.x + 1, h.y) - radius(sp, h.x - 1, h.y)) / 2, gy = (radius(sp, h.x, h.y + 1) - radius(sp, h.x, h.y - 1)) / 2;
+  const s = P * Math.hypot(gx, gy);
+  const zs = { els: sp.els.map(e => ({ R: e.R, th: e.th, a: e.a * s, b: e.b * s, cx: f.x + s * (e.cx - h.x), cy: f.y + s * (e.cy - h.y) })) };
+  const Rl = nearLine(rw + (h.dr || 0)), o = ringOffset(px, zs, f.x, f.y, Rl, P, f.rho, [{ x: f.x, y: f.y, ux: f.ux, uy: f.uy, rho: f.rho, len: t.len }], true);
+  if (!o) return fail("Le trait du cordon n'a pas pu être repéré à côté du tube. Reculez un peu pour qu'il soit visible de chaque côté de la flèche.");
+  const r = Math.max(0, rw - o.d);
+  if (Math.abs(r - rw - (h.dr || 0)) > 0.35) return fail("Ce gros plan ne correspond pas à la flèche n° " + (Z.i + 1) + " de la photo d'ensemble. Vérifiez la flèche désignée.");
+  const gap = r - su - Rl, val = scoreAt(r), mm = (Math.abs(gap) * S.cfg.diam / 2).toFixed(1).replace(".", ","), tol = Math.max(TOL.zoom, 3 / P);
+  const hi = Rl === 0.5 ? (S.cfg.ten === "x" ? "X" : "petit 10") : String(11 - Rl);
+  const e = ellAt(zs, Rl), c = Math.cos(e.th), sn = Math.sin(e.th);
+  const phi = Math.atan2((-(f.x - e.cx) * sn + (f.y - e.cy) * c) / e.b, ((f.x - e.cx) * c + (f.y - e.cy) * sn) / e.a);
+  Z.res = { x: f.x, y: f.y, rho: f.rho, P, sp: zs, Rl, delta: o.d, slope: o.slope, curv: o.curv, phi, dsr: Math.hypot(e.a * Math.sin(phi), e.b * Math.cos(phi)), r, val, tol,
+    text: (gap < 0 ? `Gros plan : le tube mord de ${mm} mm sur le cordon du ${hi}. Valeur : ${val}.` : `Gros plan : le tube reste à ${mm} mm du cordon du ${hi}. Valeur : ${val}.`)
+      + (Math.abs(gap) < tol ? " L'écart est trop faible pour être certain, même de près : vérifiez sur la cible." : "") };
+  Z.stage = "done";
 }
 
 /* ---------- groupement ---------- */
@@ -992,35 +1419,47 @@ function renderGroup() {
 }
 
 /* ---------- photo de démonstration (dessinée) ---------- */
-/* rand : scène tirée au hasard (bancs de test) ; sinon scène fixe. */
-function makeDemo(rand) {
-  const W = 1500, H = 2000, c = document.createElement("canvas"); c.width = W; c.height = H;
-  const g = c.getContext("2d"), tri = S.cfg.face === "tri", F = face(), rnd = (a, b) => a + Math.random() * (b - a);
-  g.fillStyle = "#8a7355"; g.fillRect(0, 0, W, H);
-  for (let i = 0; i < 3500; i++) { g.fillStyle = `rgba(${rnd(60, 120) | 0},${rnd(45, 85) | 0},${rnd(25, 55) | 0},.3)`; g.fillRect(rnd(0, W), rnd(0, H), rnd(30, 90), 3); }
-  const kz = rand ? rnd(0.72, 0.98) : 0.95;
-  g.save(); g.translate(W / 2, H / 2); g.rotate(rand ? rnd(-0.08, 0.08) : 0.03); g.scale(kz, kz); g.translate(-W / 2, -H / 2);
-  const centers = tri ? [[750, 400], [750, 1000], [750, 1600]] : [[750, 1000]], ring = tri ? 54 : 66, sh = shaftU() * 2 * ring;
-  g.fillStyle = "#f1efe8"; if (tri) g.fillRect(440, 60, 620, 1880); else g.fillRect(50, 300, 1400, 1400);
+/* Scène : blason à plat et flèches. rand : tirée au hasard (bancs de test) ; sinon scène fixe. */
+function demoScene(rand) {
+  const W = 1500, H = 2000, tri = S.cfg.face === "tri", rnd = (a, b) => a + Math.random() * (b - a);
+  const centers = tri ? [[750, 400], [750, 1000], [750, 1600]] : [[750, 1000]], ring = tri ? 54 : 66;
+  const sc = { W, H, tri, centers, ring, sh: shaftU() * 2 * ring, kz: rand ? rnd(0.72, 0.98) : 0.95, rot: rand ? rnd(-0.08, 0.08) : 0.03 };
+  sc.list = window._demoList ? window._demoList : !rand ? (tri ? [[0, 0.3, 1.0], [1, 2.6, 3.5], [2, 4.4, 5.5]] : [[0, 0.4, 1], [0, 2.7, 2.5], [0, 5.3, 4], [0, 7.4, 5.2], [0, 1.5, 0.2], [0, 3.6, 3.3]].slice(0, S.cfg.perEnd))
+    : tri ? [0, 1, 2].map(i => [i, rnd(0, 5.2), rnd(0, 6.28)]) : Array.from({ length: S.cfg.perEnd }, () => [0, rnd(0, 9.6), rnd(0, 6.28)]);
+  const vane = ["#19c37d", "#ff7a1a", "#b44dff"], tubes = ["#16181a", "#16181a", "#3a3d42", "#b9bcc0"];
+  sc.arrows = sc.list.map(([si, r, an], n) => {
+    const x = centers[si][0] + Math.cos(an) * r * ring, y = centers[si][1] + Math.sin(an) * r * ring;
+    let dx = x - W / 2, dy = y - H / 2; if (Math.hypot(dx, dy) < 120) { dx = Math.cos(an + 1); dy = Math.sin(an + 1); }
+    return { x, y, a: Math.atan2(dy, dx) + rnd(-0.35, 0.35), L: rand ? rnd(160, 270) : rnd(200, 250), tube: rand ? tubes[(Math.random() * 4) | 0] : tubes[0], vane: vane[n % 3] };
+  });
+  return sc;
+}
+/* Dessine la scène à plat ; la transformation en place dans g la place dans l'image. */
+function paintScene(g, sc) {
+  const F = face(), { centers, ring, sh } = sc;
+  g.fillStyle = "#f1efe8"; if (sc.tri) g.fillRect(440, 60, 620, 1880); else g.fillRect(50, 300, 1400, 1400);
   const cols = ["#f6d21c", "#f6d21c", "#e2392f", "#e2392f", "#35a7e6", "#35a7e6", "#1d1d1d", "#1d1d1d", "#f1efe8", "#f1efe8"];
   for (const [cx, cy] of centers) {
     for (let k = F.max; k >= 1; k--) { g.beginPath(); g.arc(cx, cy, k * ring, 0, 7); g.fillStyle = cols[k - 1]; g.fill(); g.lineWidth = 2; g.strokeStyle = k === 7 ? "#eee" : "#222"; g.stroke(); }
     g.beginPath(); g.arc(cx, cy, ring / 2, 0, 7); g.stroke();
   }
-  const list = window._demoList ? window._demoList : !rand ? (tri ? [[0, 0.3, 1.0], [1, 2.6, 3.5], [2, 4.4, 5.5]] : [[0, 0.4, 1], [0, 2.7, 2.5], [0, 5.3, 4], [0, 7.4, 5.2], [0, 1.5, 0.2], [0, 3.6, 3.3]].slice(0, S.cfg.perEnd))
-    : tri ? [0, 1, 2].map(i => [i, rnd(0, 5.2), rnd(0, 6.28)]) : Array.from({ length: S.cfg.perEnd }, () => [0, rnd(0, 9.6), rnd(0, 6.28)]);
-  const vane = ["#19c37d", "#ff7a1a", "#b44dff"], tubes = ["#16181a", "#16181a", "#3a3d42", "#b9bcc0"];
-  const tf = g.getTransform(), flat = [];
-  list.forEach(([si, r, an], n) => {
-    const x = centers[si][0] + Math.cos(an) * r * ring, y = centers[si][1] + Math.sin(an) * r * ring;
-    flat.push([tf.a * x + tf.c * y + tf.e, tf.b * x + tf.d * y + tf.f]);
-    let dx = x - W / 2, dy = y - H / 2; if (Math.hypot(dx, dy) < 120) { dx = Math.cos(an + 1); dy = Math.sin(an + 1); }
-    const a = Math.atan2(dy, dx) + rnd(-0.35, 0.35), L = rand ? rnd(160, 270) : rnd(200, 250), ux = Math.cos(a), uy = Math.sin(a);
+  for (const q of sc.arrows) {
+    const { x, y, L } = q, ux = Math.cos(q.a), uy = Math.sin(q.a);
     const seg = (t0, t1, wd, col, ox = 0, oy = 0) => { g.beginPath(); g.moveTo(x + ux * t0 + ox, y + uy * t0 + oy); g.lineTo(x + ux * t1 + ox, y + uy * t1 + oy); g.lineWidth = wd; g.strokeStyle = col; g.stroke(); };
     seg(0, L, sh, "rgba(0,0,0,.22)", 10, 14);
-    seg(0, L, sh, rand ? tubes[(Math.random() * 4) | 0] : tubes[0]); seg(L * 0.66, L * 0.95, sh * 4, vane[n % 3]); seg(L * 0.95, L, sh * 1.3, "#f2f2f2");
-  });
-  g.restore();
+    seg(0, L, sh, q.tube); seg(L * 0.66, L * 0.95, sh * 4, q.vane); seg(L * 0.95, L, sh * 1.3, "#f2f2f2");
+    // le tube est un cylindre planté dans la cible : son bout visible est arrondi, centré sur le trou
+    g.beginPath(); g.arc(x, y, sh / 2, 0, 7); g.fillStyle = q.tube; g.fill();
+  }
+}
+function makeDemo(rand) {
+  const sc = demoScene(rand), { W, H } = sc, c = document.createElement("canvas"); c.width = W; c.height = H;
+  const g = c.getContext("2d"), rnd = (a, b) => a + Math.random() * (b - a);
+  g.fillStyle = "#8a7355"; g.fillRect(0, 0, W, H);
+  for (let i = 0; i < 3500; i++) { g.fillStyle = `rgba(${rnd(60, 120) | 0},${rnd(45, 85) | 0},${rnd(25, 55) | 0},.3)`; g.fillRect(rnd(0, W), rnd(0, H), rnd(30, 90), 3); }
+  g.save(); g.translate(W / 2, H / 2); g.rotate(sc.rot); g.scale(sc.kz, sc.kz); g.translate(-W / 2, -H / 2);
+  const tf = g.getTransform(); paintScene(g, sc); g.restore();
+  const flat = sc.arrows.map(q => [tf.a * q.x + tf.c * q.y + tf.e, tf.b * q.x + tf.d * q.y + tf.f]);
   // perspective : les 4 coins de la scène à plat sont déplacés, comme une photo prise de biais
   const o = rand ? () => rnd(-110, 110) : null;
   const dst = rand ? [[o(), o()], [W + o(), o()], [W + o(), H + o()], [o(), H + o()]] : [[45, 30], [W - 70, 10], [W - 25, H - 45], [55, H - 20]];
@@ -1043,9 +1482,12 @@ function makeDemo(rand) {
   sh2.addColorStop(0, "rgba(0,0,0,0)"); sh2.addColorStop(1, `rgba(0,0,0,${rand ? rnd(0.1, 0.4) : 0.3})`);
   g.fillStyle = sh2; g.fillRect(0, 0, W, H);
   if (rand) { g.fillStyle = Math.random() < 0.5 ? `rgba(255,190,110,${rnd(0, 0.12)})` : `rgba(120,160,255,${rnd(0, 0.1)})`; g.fillRect(0, 0, W, H); }   // dominante de couleur
-  window._demoPts = flat.map(([x, y]) => { const q = h[6] * x + h[7] * y + 1; return [(h[0] * x + h[1] * y + h[2]) / q, (h[3] * x + h[4] * y + h[5]) / q]; });
-  window._demoR = list.map(q => q[1]);
-  window._demoTruth = list.map(q => scoreAt(q[1]));
+  const warp = ([x, y]) => { const q = h[6] * x + h[7] * y + 1; return [(h[0] * x + h[1] * y + h[2]) / q, (h[3] * x + h[4] * y + h[5]) / q]; };
+  sc.toPhoto = (x, y) => warp([tf.a * x + tf.c * y + tf.e, tf.b * x + tf.d * y + tf.f]);   // scène à plat -> photo
+  window._demoScene = sc;
+  window._demoPts = flat.map(warp);
+  window._demoR = sc.list.map(q => q[1]);
+  window._demoTruth = sc.list.map(q => scoreAt(q[1]));
   return c;
 }
 /* Banc de test : n scènes au hasard, comparaison détection / vérité. */
@@ -1058,11 +1500,11 @@ window.selfTest = n => {
     const used = new Set();
     window._demoPts.forEach((p, j) => {
       let b = -1, bd = 1e9; A.hits.forEach((hh, k) => { const dd = Math.hypot(hh.x - p[0], hh.y - p[1]); if (dd < bd && !used.has(k)) { bd = dd; b = k; } });
-      const loc = b >= 0 ? locate(A.hits[b].x, A.hits[b].y) : null, ok = !!loc && bd / ringPx(A.spots[loc.si]) < 1;
+      const loc = b >= 0 ? hitLoc(A.hits[b]) : null, ok = !!loc && bd / ringPx(A.spots[loc.si]) < 1;
       if (ok) used.add(b);
       const hh = ok ? A.hits[b] : null, re = window._demoR[j] - shaftU();
       res.push({ near: loc ? bd / ringPx(A.spots[loc.si]) : -1, nh: A.hits.length, r: window._demoR[j], truth: window._demoTruth[j], found: ok, err: ok ? bd / ringPx(A.spots[loc.si]) : null, rerr: ok ? loc.r - window._demoR[j] : null,
-        val: ok ? hitVal(hh) : null, unsure: ok && !!hh.unsure, cordon: ok && cordon(hh), tight: Math.abs(re - Math.round(re)) < 0.1 || Math.abs(re - 0.5) < 0.1 });
+        val: ok ? hitVal(hh) : null, unsure: ok && !!hh.unsure, cordon: ok && cordon(hh), fine: ok && !!hh.fine, cal: ok && !!hh.cal, dr: ok ? hh.dr || 0 : 0, tight: Math.abs(re - Math.round(re)) < 0.1 || Math.abs(re - 0.5) < 0.1 });
     });
     extra += A.hits.length - used.size;
   }

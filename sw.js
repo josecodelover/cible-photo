@@ -1,6 +1,6 @@
 // Cible Photo : fonctionnement hors ligne.
 // Change VERSION à chaque mise à jour du site pour que les téléphones récupèrent la nouvelle version.
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 const CACHE = "cible-photo-" + VERSION;
 const FILES = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 
