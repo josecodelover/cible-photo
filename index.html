@@ -206,6 +206,19 @@ function cordon(h) {
   return re > 0.9 && Math.abs(re - Math.round(re)) < tol;
 }
 const hitVal = h => { if (h.ov) return h.ov; const l = hitLoc(h); return l ? scoreAt(l.r) : "M"; };
+/* Valeurs retenues pour la volée. Trispot : une flèche par spot ; si plusieurs flèches sont dans le même spot,
+   seule la moins bonne compte et les autres valent M (dup). */
+function endVals() {
+  const raw = A.hits.map(hitVal), out = raw.map(v => ({ v, dup: false }));
+  if (S.cfg.face !== "tri") return out;
+  const by = {};
+  A.hits.forEach((h, i) => { const l = locate(h.x, h.y); if (l && raw[i] !== "M") (by[l.si] = by[l.si] || []).push(i); });
+  for (const g of Object.values(by)) if (g.length > 1) {
+    const keep = g.reduce((a, b) => ord(raw[b]) < ord(raw[a]) ? b : a);
+    for (const i of g) if (i !== keep) out[i] = { v: "M", dup: true };
+  }
+  return out;
+}
 
 /* Ajustement d'ellipse par moindres carrés (conique), avec rejet des points aberrants. */
 function gauss(M) {                       // résout M (n lignes, n+1 colonnes) par pivot de Gauss
@@ -427,33 +440,200 @@ function findArrows(d, w, h, spots) {
     } else if (fg && bt === 2) {
       // sur un cordon : tout ce qui est plus sombre que l'anneau (plus clair dans le noir) peut être le trait imprimé
       const dL = mu[z] ? f[0] - mu[z][0] : 0, zn = F.bounds[z % NZ];
-      if (zn && zn[0] === "K" ? dL > 1 : dL < -1) fg = false;
+      if (window._tstBands || (zn && zn[0] === "K" ? dL > 1 : dL < -1)) fg = false;   // _tstBands : essais sur captures d'écran
     }
     mask[i] = fg ? 1 : 0;
   }
   mask = fine ? morph(morph(mask, w, h, 1, false), w, h, 1 + g, true) : morph(mask, w, h, g, true);
 
-  const tol = shaftPx / 2 + g + 1, minLen = 0.9 * rpx, cands = [], stubs = [];
-  const open = (x, y) => { x = Math.round(x); y = Math.round(y); return x < 0 || y < 0 || x >= w || y >= h || zid[y * w + x] < 0 || rad[y * w + x] > F.dom - 0.25; };
+  /* Blason complet : la zone noire cache les tubes sombres, l'assemblage des segments y a ses règles propres
+     (prolongement à travers le noir, appariement des bouts isolés). Il est resté tel qu'il a été réglé sur le banc d'essai. */
+  if (F.bounds.some(b => b[0] === "K")) {
+    const tol = shaftPx / 2 + g + 1, minLen = 0.9 * rpx, cands = [], stubs = [];
+    const open = (x, y) => { x = Math.round(x); y = Math.round(y); return x < 0 || y < 0 || x >= w || y >= h || zid[y * w + x] < 0 || rad[y * w + x] > F.dom - 0.25; };
+    const hasK = F.bounds.some(b => b[0] === "K");
+    const isK = i => { const zn = F.bounds[zid[i] % NZ]; return !!zn && zn[0] === "K"; };
+    /* Au-delà du bout d'un segment : si l'on traverse du noir puis qu'on retrouve des pixels étrangers
+       dans l'axe, c'est le même tube. Renvoie la longueur à ajouter. */
+    const extend = (ln, t, dir) => {
+      let k = 0, last = null, seenK = false; const nx = -ln.uy, ny = ln.ux;
+      for (let s = 1; s < 6 * rpx; s++) {
+        const bx = ln.mx + ln.ux * (t + dir * s), by = ln.my + ln.uy * (t + dir * s), x = Math.round(bx), y = Math.round(by);
+        if (x < 0 || y < 0 || x >= w || y >= h) break;
+        const i = y * w + x; if (zid[i] < 0) break;
+        const sp = tol + 0.12 * s; let sum = 0, c = 0;      // recherche en cône : l'axe estimé n'est pas parfait
+        for (let o = -sp; o <= sp; o += 1.5) { const X = Math.round(bx + nx * o), Y = Math.round(by + ny * o); if (X >= 0 && Y >= 0 && X < w && Y < h && mask[Y * w + X]) { sum += o; c++; } }
+        if (c) { if (seenK) last = { s, x: bx + nx * sum / c, y: by + ny * sum / c }; k = 0; }
+        else if (isK(i) || band(rad[i]) === 1) { seenK = seenK || isK(i); if (++k > 2.6 * rpx) break; }
+        else break;
+      }
+      return last;
+    };
+    const rAt = (x, y) => { x = Math.round(x); y = Math.round(y); return x < 0 || y < 0 || x >= w || y >= h ? 99 : rad[y * w + x]; };
+    for (const px of components(mask, w, h)) {
+      if (px.length < 0.1 * rpx * rpx) continue;
+      // tache collée à une frontière de couleur ou au bord : défaut d'ajustement, pas une flèche
+      let r0 = 99, r1 = 0; for (const i of px) if (zid[i] >= 0) { if (rad[i] < r0) r0 = rad[i]; if (rad[i] > r1) r1 = rad[i]; }
+      if (zb.some(b => r0 > b - 0.35 && r1 < b + 0.35)) continue;
+      const step = Math.ceil(px.length / 5000), xs = [], ys = [];
+      for (let k = 0; k < px.length; k += step) { xs.push(px[k] % w); ys.push((px[k] / w) | 0); }
+      const lines = ransacLines(xs, ys, tol, minLen, step);
+      let got = 0;
+      for (const ln of lines) {
+        // largeur de la composante autour de la ligne : aux deux bouts et en tout
+        const len = ln.t1 - ln.t0, seg = 0.3 * len; let nA = 0, nB = 0, wide = 0, thin = 0;
+        for (let k = 0; k < xs.length; k++) {
+          const dx = xs[k] - ln.mx, dy = ys[k] - ln.my, t = dx * ln.ux + dy * ln.uy, p = Math.abs(dx * ln.uy - dy * ln.ux);
+          if (t < ln.t0 || t > ln.t1 || p > 4 * tol) continue;
+          wide++; if (p <= tol) thin++;
+          if (t < ln.t0 + seg) nA++; else if (t > ln.t1 - seg) nB++;
+        }
+        const P = t => [ln.mx + ln.ux * t, ln.my + ln.uy * t];
+        let a = P(ln.t0 + g), b = P(ln.t1 - g), ext = false, force = null;
+        if (hasK) {
+          // Tube noir invisible sur la zone noire : on regarde si la flèche reprend de l'autre côté du noir.
+          // Segment épais = empennage, l'impact est au bout du prolongement ; segment fin = tube, l'impact est à l'opposé.
+          const fat = wide > 1.6 * thin, eA = extend(ln, ln.t0, -1), eB = extend(ln, ln.t1, 1);
+          if (!!eA !== !!eB) {
+            ext = true;
+            if (eA) { ln.t0 -= eA.s; if (fat) force = a = [eA.x + ln.ux * g, eA.y + ln.uy * g]; else force = b; }
+            else { ln.t1 += eB.s; if (fat) force = b = [eB.x - ln.ux * g, eB.y - ln.uy * g]; else force = a; }
+          }
+        }
+        if (!ext && wide > 2.6 * thin) continue;         // tache large, pas un tube
+        const rs = [0, .25, .5, .75, 1].map(q => rAt(...P(ln.t0 + q * (ln.t1 - ln.t0))));
+        if (cb.some(q => rs.every(r => Math.abs(r - q) < 0.3))) continue;   // croissant le long d'une frontière
+        if (rs.every(r => Math.abs(r - Math.round(rs[2])) < 0.2)) continue;  // arc le long d'un cordon
+        const oa = open(...P(ln.t0)), ob = open(...P(ln.t1));
+        let tip, unsure = false;
+        if (oa && ob) continue;
+        if (force) tip = force;
+        else if (oa !== ob) {
+          // un bout sort de la zone : l'impact est l'autre... sauf si cet autre bout est l'empennage
+          // (flèche plantée ailleurs, dont l'arrière passe au-dessus de ce spot)
+          if (oa ? nB > 1.35 * nA : nA > 1.35 * nB) continue;
+          tip = oa ? b : a;
+        }
+        else if (nA > 1.35 * nB) tip = b;
+        else if (nB > 1.35 * nA) tip = a;
+        else { unsure = true; tip = Math.hypot(a[0] - w / 2, a[1] - h / 2) < Math.hypot(b[0] - w / 2, b[1] - h / 2) ? a : b; }
+        if (hasK) { const rt = rAt(tip[0], tip[1]); if (rt > 5.7 && rt < 8.3) unsure = true; }   // bout au bord du noir : à vérifier
+        if (!ext) {
+          // un tube sombre est invisible sur le trait d'un cordon : si le bout s'arrête juste devant un cordon,
+          // l'impact est quelque part dans l'épaisseur du trait -> on vise le milieu
+          const oth = tip === a ? b : a, ol = Math.hypot(tip[0] - oth[0], tip[1] - oth[1]) || 1, ox = (tip[0] - oth[0]) / ol, oy = (tip[1] - oth[1]) / ol;
+          if (band(rAt(tip[0] + ox * 2, tip[1] + oy * 2)) === 2) tip = [tip[0] + ox * 0.08 * rpx, tip[1] + oy * 0.08 * rpx];
+        }
+        cands.push({ x: tip[0], y: tip[1], unsure, q: ln.t1 - ln.t0, ends: [P(ln.t0), P(ln.t1)] }); got++;
+      }
+      if (!got && px.length < 6 * rpx * rpx) {           // petite tache sans segment
+        let x0 = w, x1 = 0, y0 = h, y1 = 0, sx = 0, sy = 0;
+        for (const i of px) { const x = i % w, y = (i / w) | 0; sx += x; sy += y; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+        const bw = x1 - x0 + 1, bh = y1 - y0 + 1, big = Math.max(bw, bh);
+        // tache qui entre par le bord de la zone analysée : flèche plantée près du bord, tube sortant.
+        let ex = 0, ey = 0, ne = 0;
+        for (const i of px) if (rad[i] > F.dom - 0.2) { ex += i % w; ey += (i / w) | 0; ne++; }
+        if (ne) {
+          ex /= ne; ey /= ne; let far = -1, fx = 0, fy = 0;
+          for (const i of px) { const x = i % w, y = (i / w) | 0, dd = Math.hypot(x - ex, y - ey); if (dd > far) { far = dd; fx = x; fy = y; } }
+          const tx = fx - (fx - ex) / far * g, ty = fy - (fy - ey) / far * g;
+          if (far >= 0.3 * rpx && rAt(tx, ty) < Math.min(F.max + shaftU(), F.dom - 0.45)) { cands.push({ x: tx, y: ty, unsure: false, q: far, ends: [], fx: ex, fy: ey }); continue; }
+        }
+        stubs.push({ px, cx: sx / px.length, cy: sy / px.length, blob: !lines.length && big >= 0.6 * rpx && big <= 3.5 * rpx && px.length >= 0.35 * bw * bh });
+      }
+    }
+    // Tube noir coupé par la zone noire : l'avant de la flèche est une petite tache isolée, reliée
+    // à son empennage par du noir. L'impact est alors le bout de cette tache.
+    if (hasK) for (const st of stubs) {
+      let best = null;
+      const ci = Math.round(st.cy) * w + Math.round(st.cx);
+      if (zid[ci] < 0 || isK(ci)) continue;              // l'avant visible d'un tube noir n'est jamais dans le noir
+      for (const c of cands) for (const e of c.ends) {
+        const vx = st.cx - e[0], vy = st.cy - e[1], d = Math.hypot(vx, vy);
+        if (d > 3.5 * rpx || d < 2) continue;
+        let nk = 0, nok = 0;
+        for (let q = 1; q < 12; q++) {
+          const i = Math.round(e[1] + vy * q / 12) * w + Math.round(e[0] + vx * q / 12);
+          if (zid[i] < 0) continue;
+          if (isK(i)) { nk++; nok++; } else if (mask[i] || band(rad[i]) === 1) nok++;
+        }
+        if (nk >= 3 && nok >= 9 && (!best || d < best.d)) best = { c, e, d };
+      }
+      if (!best) continue;
+      let far = -1, fx = 0, fy = 0;
+      for (const i of st.px) { const x = i % w, y = (i / w) | 0, d = Math.hypot(x - best.e[0], y - best.e[1]); if (d > far) { far = d; fx = x; fy = y; } }
+      best.c.x = fx - (fx - best.e[0]) / far * g; best.c.y = fy - (fy - best.e[1]) / far * g;
+      best.c.unsure = false; best.c.q += best.d; st.used = true;
+    }
+    for (const st of stubs) if (!st.used && st.blob) cands.push({ x: st.cx, y: st.cy, unsure: true, q: 0, ends: [] });   // flèche vue de face
+    cands.sort((p, q) => q.q - p.q);
+    const kept = cands.filter((c, i) => !cands.slice(0, i).some(o => Math.hypot(o.x - c.x, o.y - c.y) < 0.6 * rpx));   // doublons
+    for (const c of kept) if (c.ends.length === 2) {     // autre bout du tube : donne l'axe pour l'affinage
+      const e = c.ends, far = Math.hypot(e[0][0] - c.x, e[0][1] - c.y) > Math.hypot(e[1][0] - c.x, e[1][1] - c.y) ? e[0] : e[1];
+      c.fx = far[0]; c.fy = far[1];
+    }
+    return kept.slice(0, S.cfg.perEnd).sort((p, q) => p.y - q.y || p.x - q.x);
+  }
+  /* Trispot : assemblage réglé sur de vraies photos (tubes longs qui passent d'un spot à l'autre, tubes brillants). */
+  const tol = shaftPx / 2 + g + 1, minLen = 0.9 * rpx, cands = [], stubs = [], segs = [];
   const hasK = F.bounds.some(b => b[0] === "K");
   const isK = i => { const zn = F.bounds[zid[i] % NZ]; return !!zn && zn[0] === "K"; };
-  /* Au-delà du bout d'un segment : si l'on traverse du noir puis qu'on retrouve des pixels étrangers
-     dans l'axe, c'est le même tube. Renvoie la longueur à ajouter. */
-  const extend = (ln, t, dir) => {
-    let k = 0, last = null, seenK = false; const nx = -ln.uy, ny = ln.ux;
-    for (let s = 1; s < 6 * rpx; s++) {
-      const bx = ln.mx + ln.ux * (t + dir * s), by = ln.my + ln.uy * (t + dir * s), x = Math.round(bx), y = Math.round(by);
-      if (x < 0 || y < 0 || x >= w || y >= h) break;
-      const i = y * w + x; if (zid[i] < 0) break;
-      const sp = tol + 0.12 * s; let sum = 0, c = 0;      // recherche en cône : l'axe estimé n'est pas parfait
-      for (let o = -sp; o <= sp; o += 1.5) { const X = Math.round(bx + nx * o), Y = Math.round(by + ny * o); if (X >= 0 && Y >= 0 && X < w && Y < h && mask[Y * w + X]) { sum += o; c++; } }
-      if (c) { if (seenK) last = { s, x: bx + nx * sum / c, y: by + ny * sum / c }; k = 0; }
-      else if (isK(i) || band(rad[i]) === 1) { seenK = seenK || isK(i); if (++k > 2.6 * rpx) break; }
-      else break;
+  const inImg = (x, y) => x >= 0 && y >= 0 && x < w && y < h;
+  const rAt = (x, y) => { x = Math.round(x); y = Math.round(y); return inImg(x, y) ? rad[y * w + x] : 99; };
+  const rgbAt = (x, y) => { const i = (Math.round(y) * w + Math.round(x)) * 4; return [d[i], d[i + 1], d[i + 2]]; };
+  /* Le masque de couleur ne voit pas tout : rien hors des zones (papier blanc, entre deux spots), rien sur les
+     traits, et un tube brillant prend la couleur de l'anneau qu'il survole. On reconnaît alors le tube à son
+     relief : en travers de l'axe, plusieurs pixels tranchent à la fois sur le fond de gauche et sur celui de droite. */
+  const ridge = (x, y, nx, ny, sw) => {                // sw : largeur attendue du tube à cet endroit
+    sw = Math.max(shaftPx, sw || 0);
+    const f = [0, 0, 0, 0, 0, 0], o1 = 0.75 * sw + 2;
+    for (const o of [o1, o1 + 2]) for (const s of [1, -1]) {
+      const X = Math.round(x + s * nx * o), Y = Math.round(y + s * ny * o); if (!inImg(X, Y)) return false;
+      const i = (Y * w + X) * 4, k = s > 0 ? 0 : 3; f[k] += d[i] / 2; f[k + 1] += d[i + 1] / 2; f[k + 2] += d[i + 2] / 2;
     }
-    return last;
+    // les deux bords du tube doivent se voir : une déchirure du papier n'en a qu'un
+    let l = 0, r = 0;
+    for (let o = -0.75 * sw; o <= 0.75 * sw; o += 1) {
+      const X = Math.round(x + nx * o), Y = Math.round(y + ny * o), i = (Y * w + X) * 4;
+      if (Math.hypot(d[i] - f[0], d[i + 1] - f[1], d[i + 2] - f[2]) > 28 && Math.hypot(d[i] - f[3], d[i + 1] - f[4], d[i + 2] - f[5]) > 28) { if (o < -0.15 * sw) l++; else if (o > 0.15 * sw) r++; }
+    }
+    return l > 0 && r > 0;
   };
-  const rAt = (x, y) => { x = Math.round(x); y = Math.round(y); return x < 0 || y < 0 || x >= w || y >= h ? 99 : rad[y * w + x]; };
+  // largeur du masque en travers d'une ligne, au point t (-1 si rien)
+  const wAt = (ln, t) => {
+    const x = ln.mx + ln.ux * t, y = ln.my + ln.uy * t, nx = -ln.uy, ny = ln.ux;
+    const on = o => { const X = Math.round(x + nx * o), Y = Math.round(y + ny * o); return inImg(X, Y) && mask[Y * w + X]; };
+    let o0 = 0; while (o0 <= tol && !on(o0) && !on(-o0)) o0++;
+    if (o0 > tol) return -1; if (!on(o0)) o0 = -o0;
+    let a = o0, b = o0; while (a > -6 * tol && on(a - 1)) a--; while (b < 6 * tol && on(b + 1)) b++;
+    return b - a + 1;
+  };
+  /* Suit un tube au-delà du bout d'un segment : à travers les traits, les frontières de couleur, le papier
+     entre deux spots et la zone noire. Renvoie le vrai bout, et s'il est hors de la zone marquante. */
+  const trace = (ln, t, dir) => {
+    const nx = -ln.uy, ny = ln.ux; let wRun = wAt(ln, t - dir * Math.min(0.5 * rpx, (ln.t1 - ln.t0) / 3)), lms = 0, isM = false, off = 0, gap = 0, lx = ln.mx + ln.ux * t, ly = ln.my + ln.uy * t, ls = 0, edge = false;
+    for (let s = 1; s < 60 * rpx; s++) {
+      const bx = ln.mx + ln.ux * (t + dir * s) + nx * off, by = ln.my + ln.uy * (t + dir * s) + ny * off, x = Math.round(bx), y = Math.round(by);
+      if (!inImg(x, y)) { edge = true; break; }
+      const i = y * w + x, inZ = zid[i] >= 0, bt = inZ ? band(rad[i]) : 0, sp = tol + 0.12 * gap;
+      let hit = false; isM = false;
+      // largeur du masque en travers de l'axe : celle d'un tube varie peu d'un pas au suivant,
+      // un trou ou une déchirure accolés au bout la font sauter
+      const on = o => { const X = Math.round(bx + nx * o), Y = Math.round(by + ny * o); return inImg(X, Y) && mask[Y * w + X]; };
+      let o0 = 0; while (o0 <= sp && !on(o0) && !on(-o0)) o0++;
+      if (o0 <= sp) {
+        if (!on(o0)) o0 = -o0;
+        let a = o0, b = o0; while (a > -6 * tol && on(a - 1)) a--; while (b < 6 * tol && on(b + 1)) b++;
+        const c = b - a + 1, m = (a + b) / 2;
+        if (wRun < 0) wRun = c;
+        if (c >= 0.5 * wRun && c <= 1.5 * wRun + 2 && Math.abs(m) < 0.6 * tol + 0.12 * gap) { hit = isM = true; off += 0.5 * m; wRun = 0.9 * wRun + 0.1 * c; }
+      }
+      if (!hit) for (const o of [0, 1.5, -1.5]) if (ridge(bx + nx * o, by + ny * o, nx, ny, inZ ? 0 : wRun - 2 * g)) { hit = true; off += 0.3 * o; break; }
+      if (hit) { gap = 0; lx = bx; ly = by; ls = s; if (isM) lms = s; }
+      else if (++gap > (inZ && isK(i) ? 2.6 : inZ && !bt ? 0.25 : 0.4) * rpx) break;
+    }
+    return { x: lx, y: ly, s: ls, mk: ls - lms <= 0.35 * rpx, out: edge || rAt(lx, ly) > F.max + shaftU() + 0.1 };
+  };
   for (const px of components(mask, w, h)) {
     if (px.length < 0.1 * rpx * rpx) continue;
     // tache collée à une frontière de couleur ou au bord : défaut d'ajustement, pas une flèche
@@ -464,51 +644,18 @@ function findArrows(d, w, h, spots) {
     const lines = ransacLines(xs, ys, tol, minLen, step);
     let got = 0;
     for (const ln of lines) {
-      // largeur de la composante autour de la ligne : aux deux bouts et en tout
-      const len = ln.t1 - ln.t0, seg = 0.3 * len; let nA = 0, nB = 0, wide = 0, thin = 0;
+      let wide = 0, thin = 0;
       for (let k = 0; k < xs.length; k++) {
         const dx = xs[k] - ln.mx, dy = ys[k] - ln.my, t = dx * ln.ux + dy * ln.uy, p = Math.abs(dx * ln.uy - dy * ln.ux);
         if (t < ln.t0 || t > ln.t1 || p > 4 * tol) continue;
         wide++; if (p <= tol) thin++;
-        if (t < ln.t0 + seg) nA++; else if (t > ln.t1 - seg) nB++;
       }
       const P = t => [ln.mx + ln.ux * t, ln.my + ln.uy * t];
-      let a = P(ln.t0 + g), b = P(ln.t1 - g), ext = false, force = null;
-      if (hasK) {
-        // Tube noir invisible sur la zone noire : on regarde si la flèche reprend de l'autre côté du noir.
-        // Segment épais = empennage, l'impact est au bout du prolongement ; segment fin = tube, l'impact est à l'opposé.
-        const fat = wide > 1.6 * thin, eA = extend(ln, ln.t0, -1), eB = extend(ln, ln.t1, 1);
-        if (!!eA !== !!eB) {
-          ext = true;
-          if (eA) { ln.t0 -= eA.s; if (fat) force = a = [eA.x + ln.ux * g, eA.y + ln.uy * g]; else force = b; }
-          else { ln.t1 += eB.s; if (fat) force = b = [eB.x - ln.ux * g, eB.y - ln.uy * g]; else force = a; }
-        }
-      }
-      if (!ext && wide > 2.6 * thin) continue;         // tache large, pas un tube
       const rs = [0, .25, .5, .75, 1].map(q => rAt(...P(ln.t0 + q * (ln.t1 - ln.t0))));
       if (cb.some(q => rs.every(r => Math.abs(r - q) < 0.3))) continue;   // croissant le long d'une frontière
       if (rs.every(r => Math.abs(r - Math.round(rs[2])) < 0.2)) continue;  // arc le long d'un cordon
-      const oa = open(...P(ln.t0)), ob = open(...P(ln.t1));
-      let tip, unsure = false;
-      if (oa && ob) continue;
-      if (force) tip = force;
-      else if (oa !== ob) {
-        // un bout sort de la zone : l'impact est l'autre... sauf si cet autre bout est l'empennage
-        // (flèche plantée ailleurs, dont l'arrière passe au-dessus de ce spot)
-        if (oa ? nB > 1.35 * nA : nA > 1.35 * nB) continue;
-        tip = oa ? b : a;
-      }
-      else if (nA > 1.35 * nB) tip = b;
-      else if (nB > 1.35 * nA) tip = a;
-      else { unsure = true; tip = Math.hypot(a[0] - w / 2, a[1] - h / 2) < Math.hypot(b[0] - w / 2, b[1] - h / 2) ? a : b; }
-      if (hasK) { const rt = rAt(tip[0], tip[1]); if (rt > 5.7 && rt < 8.3) unsure = true; }   // bout au bord du noir : à vérifier
-      if (!ext) {
-        // un tube sombre est invisible sur le trait d'un cordon : si le bout s'arrête juste devant un cordon,
-        // l'impact est quelque part dans l'épaisseur du trait -> on vise le milieu
-        const oth = tip === a ? b : a, ol = Math.hypot(tip[0] - oth[0], tip[1] - oth[1]) || 1, ox = (tip[0] - oth[0]) / ol, oy = (tip[1] - oth[1]) / ol;
-        if (band(rAt(tip[0] + ox * 2, tip[1] + oy * 2)) === 2) tip = [tip[0] + ox * 0.08 * rpx, tip[1] + oy * 0.08 * rpx];
-      }
-      cands.push({ x: tip[0], y: tip[1], unsure, q: ln.t1 - ln.t0, ends: [P(ln.t0), P(ln.t1)] }); got++;
+      if (Math.max(...rs) - Math.min(...rs) < 0.35) continue;              // arc le long d'un anneau
+      segs.push({ ln, len: ln.t1 - ln.t0, fat: wide > 2.6 * thin, a: P(ln.t0), b: P(ln.t1) }); got++;
     }
     if (!got && px.length < 6 * rpx * rpx) {           // petite tache sans segment
       let x0 = w, x1 = 0, y0 = h, y1 = 0, sx = 0, sy = 0;
@@ -521,49 +668,126 @@ function findArrows(d, w, h, spots) {
         ex /= ne; ey /= ne; let far = -1, fx = 0, fy = 0;
         for (const i of px) { const x = i % w, y = (i / w) | 0, dd = Math.hypot(x - ex, y - ey); if (dd > far) { far = dd; fx = x; fy = y; } }
         const tx = fx - (fx - ex) / far * g, ty = fy - (fy - ey) / far * g;
-        if (far >= 0.3 * rpx && rAt(tx, ty) < Math.min(F.max + shaftU(), F.dom - 0.45)) { cands.push({ x: tx, y: ty, unsure: false, q: far, ends: [], fx: ex, fy: ey }); continue; }
+        if (far >= 0.3 * rpx && rAt(tx, ty) < Math.min(F.max + shaftU(), F.dom - 0.45)) { cands.push({ x: tx, y: ty, unsure: false, q: far, fx: ex, fy: ey }); continue; }
       }
-      stubs.push({ px, cx: sx / px.length, cy: sy / px.length, blob: !lines.length && big >= 0.6 * rpx && big <= 3.5 * rpx && px.length >= 0.35 * bw * bh });
+      stubs.push({ cx: sx / px.length, cy: sy / px.length, blob: !lines.length && big >= 0.6 * rpx && big <= 3.5 * rpx && px.length >= 0.35 * bw * bh });
     }
   }
-  // Tube noir coupé par la zone noire : l'avant de la flèche est une petite tache isolée, reliée
-  // à son empennage par du noir. L'impact est alors le bout de cette tache.
-  if (hasK) for (const st of stubs) {
-    let best = null;
-    const ci = Math.round(st.cy) * w + Math.round(st.cx);
-    if (zid[ci] < 0 || isK(ci)) continue;              // l'avant visible d'un tube noir n'est jamais dans le noir
-    for (const c of cands) for (const e of c.ends) {
-      const vx = st.cx - e[0], vy = st.cy - e[1], d = Math.hypot(vx, vy);
-      if (d > 3.5 * rpx || d < 2) continue;
-      let nk = 0, nok = 0;
-      for (let q = 1; q < 12; q++) {
-        const i = Math.round(e[1] + vy * q / 12) * w + Math.round(e[0] + vx * q / 12);
+  /* Une flèche = un tube suivi d'un bout à l'autre, même s'il passe au-dessus d'un autre spot.
+     Les segments trouvés sur le trajet d'un tube déjà suivi en font partie : ils ne donnent pas d'impact. */
+  const arrows = [];
+  const onArrow = (x, y, only) => (only ? [only] : arrows).some(a => {
+    const vx = a.e[1].x - a.e[0].x, vy = a.e[1].y - a.e[0].y, l = a.len || 1, dx = x - a.e[0].x, dy = y - a.e[0].y;
+    const t = (dx * vx + dy * vy) / l, p = Math.abs(dx * vy - dy * vx) / l;
+    return t > -0.8 * rpx && t < l + 0.8 * rpx && p < 2.5 * tol + 0.03 * l;
+  });
+  segs.sort((p, q) => q.len - p.len);
+  for (const sg of segs) {
+    if (onArrow(...sg.a) && onArrow(...sg.b)) continue;
+    const e0 = trace(sg.ln, sg.ln.t0, -1), e1 = trace(sg.ln, sg.ln.t1, 1);
+    if (sg.fat && !(hasK && (e0.s > rpx) !== (e1.s > rpx))) continue;   // tache large (empennage seul), pas un tube
+    const na = { e: [e0, e1], len: Math.hypot(e1.x - e0.x, e1.y - e0.y) };
+    // un tube est continu d'un bout à l'autre ; une enfilade de trous ne l'est pas
+    { let ok = 0, tot = 0; const vx = (e1.x - e0.x) / (na.len || 1), vy = (e1.y - e0.y) / (na.len || 1);
+      for (let t = 0; t <= na.len; t += 2) {
+        const x = e0.x + vx * t, y = e0.y + vy * t, X = Math.round(x), Y = Math.round(y); if (!inImg(X, Y)) continue;
+        const i = Y * w + X; if (zid[i] >= 0 && (isK(i) || band(rad[i]))) continue;
         if (zid[i] < 0) continue;
-        if (isK(i)) { nk++; nok++; } else if (mask[i] || band(rad[i]) === 1) nok++;
+        tot++; if (mask[i] || ridge(x, y, -vy, vx, 0)) ok++;
       }
-      if (nk >= 3 && nok >= 9 && (!best || d < best.d)) best = { c, e, d };
-    }
-    if (!best) continue;
-    let far = -1, fx = 0, fy = 0;
-    for (const i of st.px) { const x = i % w, y = (i / w) | 0, d = Math.hypot(x - best.e[0], y - best.e[1]); if (d > far) { far = d; fx = x; fy = y; } }
-    best.c.x = fx - (fx - best.e[0]) / far * g; best.c.y = fy - (fy - best.e[1]) / far * g;
-    best.c.unsure = false; best.c.q += best.d; st.used = true;
+      na.cov = tot ? ok / tot : 1; if (tot > 4 && ok < 0.7 * tot) continue; }
+    // même tube vu en deux morceaux qui se recouvrent ou se touchent : on les réunit
+    const ux = (e1.x - e0.x) / (na.len || 1), uy = (e1.y - e0.y) / (na.len || 1);
+    const m = arrows.find(a => {
+      const c = ((a.e[1].x - a.e[0].x) * ux + (a.e[1].y - a.e[0].y) * uy) / (a.len || 1);
+      if (Math.abs(c) < 0.985) return false;
+      // les deux bouts du plus court sont sur la droite du plus long, et les deux morceaux se touchent
+      const [L, s] = a.len >= na.len ? [a, na] : [na, a], vx = (L.e[1].x - L.e[0].x) / (L.len || 1), vy = (L.e[1].y - L.e[0].y) / (L.len || 1);
+      const q = s.e.map(p => ({ t: (p.x - L.e[0].x) * vx + (p.y - L.e[0].y) * vy, p: Math.abs((p.x - L.e[0].x) * vy - (p.y - L.e[0].y) * vx) }));
+      return q.every(v => v.p < 2 * tol + 0.02 * L.len) && Math.max(q[0].t, q[1].t) > -rpx && Math.min(q[0].t, q[1].t) < L.len + rpx;
+    });
+    if (m) {
+      const pts = [...m.e, e0, e1].map(p => ({ p, t: (p.x - m.e[0].x) * (m.e[1].x - m.e[0].x) + (p.y - m.e[0].y) * (m.e[1].y - m.e[0].y) })).sort((p, q) => p.t - q.t);
+      m.e = [pts[0].p, pts[3].p]; m.len = Math.hypot(m.e[1].x - m.e[0].x, m.e[1].y - m.e[0].y);
+    } else arrows.push(na);
   }
-  for (const st of stubs) if (!st.used && st.blob) cands.push({ x: st.cx, y: st.cy, unsure: true, q: 0, ends: [] });   // flèche vue de face
+  // masse de pixels étrangers autour de chaque bout : l'empennage est du côté de l'encoche
+  for (const a of arrows) a.m = [0, 0];
+  if (arrows.length) for (let i = 0; i < n; i += 2) if (mask[i]) {
+    const x = i % w, y = (i / w) | 0;
+    for (const a of arrows) for (let k = 0; k < 2; k++) {
+      const e = a.e[k], o = a.e[1 - k], ux = (o.x - e.x) / a.len, uy = (o.y - e.y) / a.len, dx = x - e.x, dy = y - e.y, t = dx * ux + dy * uy;
+      if (t > -2 * rpx && t < Math.min(3 * rpx, 0.45 * a.len) && Math.abs(dx * uy - dy * ux) < 5 * tol) a.m[k]++;
+    }
+  }
+  /* Les flèches sont plantées à peu près droit : sur la photo leurs tubes convergent vers le point du blason
+     situé en face de l'appareil, et l'impact est le bout le plus proche de ce point. */
+  let vp = null;
+  {
+    let sxx = 0, sxy = 0, syy = 0, bx = 0, by = 0, nl = 0;
+    for (const a of arrows) if (a.len > 3 * rpx) {
+      const ux = (a.e[1].x - a.e[0].x) / a.len, uy = (a.e[1].y - a.e[0].y) / a.len, pxx = 1 - ux * ux, pxy = -ux * uy, pyy = 1 - uy * uy;
+      sxx += pxx; sxy += pxy; syy += pyy; bx += pxx * a.e[0].x + pxy * a.e[0].y; by += pxy * a.e[0].x + pyy * a.e[0].y; nl++;
+    }
+    const det = sxx * syy - sxy * sxy, tr = sxx + syy, lmin = tr / 2 - Math.sqrt(Math.max(0, tr * tr / 4 - det));
+    if (nl >= 2 && lmin > 0.012 * nl) {
+      const x = (syy * bx - sxy * by) / det, y = (sxx * by - sxy * bx) / det;
+      if (x > -0.5 * w && x < 1.5 * w && y > -0.5 * h && y < 1.5 * h) vp = [x, y];
+    }
+  }
+  const spotOf = e => { let b = -1, br = 99; spots.forEach((sp, si) => { const r = radius(sp, e.x, e.y); if (r < br) { br = r; b = si; } }); return b; };
+  const picks = [];
+  for (const a of arrows) {
+    if (a.e[0].out && a.e[1].out) continue;            // tube qui ne fait que passer
+    const sc = [0, 1].map(k => {
+      const e = a.e[k], o = a.e[1 - k];
+      return (o.out && !e.out ? 3 : 0) + (a.m[1 - k] > 1.35 * a.m[k] + 4 ? 1.5 : 0)
+        + (vp && Math.hypot(e.x - vp[0], e.y - vp[1]) < Math.hypot(o.x - vp[0], o.y - vp[1]) - rpx ? 2 : 0);
+    });
+    const k = sc[0] > sc[1] ? 0 : sc[1] > sc[0] ? 1 : Math.hypot(a.e[0].x - w / 2, a.e[0].y - h / 2) < Math.hypot(a.e[1].x - w / 2, a.e[1].y - h / 2) ? 0 : 1;
+    picks.push({ a, k, margin: Math.abs(sc[0] - sc[1]) });
+  }
+  // Trispot : une flèche par spot. Deux impacts dans le même spot alors que l'autre bout de l'un tombe dans un spot libre : on le retourne.
+  if (S.cfg.face === "tri") for (let pass = 0; pass < 3; pass++) {
+    const cnt = {}; for (const p of picks) { const s = spotOf(p.a.e[p.k]); cnt[s] = (cnt[s] || 0) + 1; }
+    const p = picks.filter(p => p.margin < 3 && !p.a.e[1 - p.k].out && cnt[spotOf(p.a.e[p.k])] > 1 && !cnt[spotOf(p.a.e[1 - p.k])]).sort((x, y) => x.margin - y.margin)[0];
+    if (!p) break;
+    p.k = 1 - p.k; p.margin = 1.5;
+  }
+  const LQ = 100 * rpx;                                // les tubes passent avant les taches
+  for (let i = cands.length - 1; i >= 0; i--) if (onArrow(cands[i].x, cands[i].y)) cands.splice(i, 1);   // tache sur le trajet d'un tube
+  for (const st of stubs) if (st.blob && !onArrow(st.cx, st.cy)) cands.push({ x: st.cx, y: st.cy, unsure: true, q: 0 });   // flèche vue de face
+  // Penne ou déchirure qui part du tube d'une flèche plus longue, côté encoche : ce n'est pas une autre flèche.
+  const branch = p => picks.some(q => {
+    if (q === p || q.a.len < 1.5 * p.a.len) return false;
+    const tip = q.a.e[q.k];
+    return p.a.e.some(e => onArrow(e.x, e.y, q.a) && Math.hypot(e.x - tip.x, e.y - tip.y) > 0.4 * q.a.len);
+  });
+  for (const p of picks.filter(p => !branch(p))) {
+    const e = p.a.e[p.k], o = p.a.e[1 - p.k]; if (e.out) continue;
+    let unsure = p.margin < 1.5 || !e.mk;              // bout suivi au relief seulement : à vérifier
+    if (hasK) { const rt = rAt(e.x, e.y); if (rt > 5.7 && rt < 8.3) unsure = true; }   // bout au bord du noir : à vérifier
+    cands.push({ x: e.x + (o.x - e.x) / p.a.len * g, y: e.y + (o.y - e.y) / p.a.len * g, unsure, q: LQ + p.a.len + (o.out ? 50 * rpx : 0), fx: o.x, fy: o.y });
+  }
   cands.sort((p, q) => q.q - p.q);
   const kept = cands.filter((c, i) => !cands.slice(0, i).some(o => Math.hypot(o.x - c.x, o.y - c.y) < 0.6 * rpx));   // doublons
-  for (const c of kept) if (c.ends.length === 2) {     // autre bout du tube : donne l'axe pour l'affinage
-    const e = c.ends, far = Math.hypot(e[0][0] - c.x, e[0][1] - c.y) > Math.hypot(e[1][0] - c.x, e[1][1] - c.y) ? e[0] : e[1];
-    c.fx = far[0]; c.fy = far[1];
+  if (window._dbg) window._dbg = { arrows, vp, rpx, shaftPx, kept, mask, d, w, h };
+  // Trispot : on sert d'abord le meilleur candidat de chaque spot, puis les suivants
+  if (S.cfg.face === "tri") {
+    const seen = new Set(), first = [], rest = [];
+    for (const c of kept) { const s = spotOf(c); if (seen.has(s)) rest.push(c); else { seen.add(s); first.push(c); } }
+    kept.length = 0; kept.push(...first, ...rest);
   }
   return kept.slice(0, S.cfg.perEnd).sort((p, q) => p.y - q.y || p.x - q.x);
 }
 function ransacLines(xs, ys, tol, minLen, wt) {
   const n = xs.length, alive = new Uint8Array(n).fill(1), out = [];
+  let seed = (n * 2654435761 + xs[0] * 40503 + ys[0]) >>> 0;                 // tirage reproductible : même photo, même résultat
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
   for (let li = 0; li < 10; li++) {
     let best = 0, bi = 0, bux = 0, buy = 0;
     for (let it = 0; it < 160; it++) {
-      const i = (Math.random() * n) | 0, j = (Math.random() * n) | 0; if (!alive[i] || !alive[j]) continue;
+      const i = (rnd() * n) | 0, j = (rnd() * n) | 0; if (!alive[i] || !alive[j]) continue;
       let ux = xs[j] - xs[i], uy = ys[j] - ys[i]; const l = Math.hypot(ux, uy); if (l < minLen * 0.6) continue;
       ux /= l; uy /= l; let c = 0;
       for (let k = 0; k < n; k++) if (alive[k] && Math.abs((xs[k] - xs[i]) * uy - (ys[k] - ys[i]) * ux) <= tol) c++;
@@ -1068,7 +1292,7 @@ function renderPanel() {
     $("#pDone").onclick = () => { A.mode = "hits"; A.hits.forEach(h => { h.rz = null; calib(h); }); if (A.spots.length && A.msg.startsWith("Blason non")) A.msg = "Touchez la photo à l'endroit de chaque impact, puis glissez le repère pour l'ajuster."; renderPanel(); draw(); };
     return;
   }
-  const vals = A.hits.map(hitVal), tot = vals.reduce((s, v) => s + val(v), 0), sel = A.hits[A.sel];
+  const ev = endVals(), vals = ev.map(e => e.v), tot = vals.reduce((s, v) => s + val(v), 0), sel = A.hits[A.sel];
   const Q = A.q;
   p.innerHTML = `
     ${Q ? `<div class="qual ${Q.ok ? (Q.warn.length ? "mid" : "good") : "bad"}">
@@ -1077,9 +1301,10 @@ function renderPanel() {
       ${Q.ok && !Q.warn.length ? "" : `<button class="btn sm ${Q.ok ? "sec" : ""}" id="pRetake" style="margin-top:8px">📷 Reprendre la photo</button>`}
     </div>` : ""}
     <div class="chips" style="margin-bottom:10px">
-      ${vals.map((v, i) => `<button class="chip z-${v} ${i === A.sel ? "sel" : ""}" data-i="${i}"><small>n° ${i + 1}${A.hits[i].ov ? " ✎" : cordon(A.hits[i]) ? " ⚠ cordon" : A.hits[i].rz != null ? " 🔍" : ""}</small>${v}</button>`).join("") || `<span class="hint">Aucun impact : touchez la photo pour en placer un.</span>`}
+      ${vals.map((v, i) => `<button class="chip z-${v} ${i === A.sel ? "sel" : ""}" data-i="${i}"><small>n° ${i + 1}${ev[i].dup ? " ✕ même spot" : A.hits[i].ov ? " ✎" : cordon(A.hits[i]) ? " ⚠ cordon" : A.hits[i].rz != null ? " 🔍" : ""}</small>${v}</button>`).join("") || `<span class="hint">Aucun impact : touchez la photo pour en placer un.</span>`}
       <div class="tot">Total<b>${tot}</b></div>
     </div>
+    ${ev.some(e => e.dup) ? `<div class="hint" style="margin-bottom:10px">✕ même spot : deux flèches dans le même spot, seule la moins bonne compte, l'autre vaut M. Si un repère est mal placé, glissez-le sur le bon spot.</div>` : ""}
     ${A.hits.some(h => !h.ov && cordon(h)) ? `<div class="hint" style="margin-bottom:10px">⚠ cordon : le tube passe trop près d'une ligne pour que cette photo permette de trancher. Sélectionnez la flèche puis prenez-la en <b>gros plan</b>, ou regardez la cible et fixez la valeur avec « Valeur − / ＋ ».</div>` : ""}
     ${sel ? `<div class="row" style="margin-bottom:10px">
       <button class="btn sec sm" id="pMinus">Valeur −</button><button class="btn sec sm" id="pPlus">Valeur ＋</button><button class="btn sec sm" id="pRem">Supprimer</button></div>
@@ -1104,7 +1329,7 @@ function validateEnd() {
   const n = A.hits.length, per = S.cfg.perEnd;
   if (n > per && !confirm(`${n} impacts pour une volée de ${per} flèches. Valider quand même ?`)) return;
   if (n < per && !confirm(`${n} impact${n > 1 ? "s" : ""} pour une volée de ${per} flèches : les flèches manquantes seront comptées M. Valider ?`)) return;
-  const arrows = A.hits.map(h => { const l = locate(h.x, h.y); return { v: hitVal(h), x: +l.nx.toFixed(3), y: +l.ny.toFixed(3) }; });
+  const ev = endVals(), arrows = A.hits.map((h, i) => { const l = locate(h.x, h.y); return { v: ev[i].v, x: +l.nx.toFixed(3), y: +l.ny.toFixed(3) }; });
   while (arrows.length < per) arrows.push({ v: "M" });
   S.ends.push({ face: S.cfg.face, arrows }); save();
   screen = "home"; A = null; render();
