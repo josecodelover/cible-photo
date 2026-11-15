@@ -10,6 +10,7 @@ Application de tir à l'arc : on photographie le blason avec le téléphone, l'a
 - Les flèches trop près d'une ligne pour trancher sont signalées « ⚠ cordon ». On peut alors prendre la flèche en **gros plan** (bouton « 🔍 Gros plan ») : on touche le tube sur la photo rapprochée et l'application mesure l'écart entre le bord du tube et le trait.
 - Trispot : chaque tube est suivi d'un bout à l'autre, même s'il passe au-dessus d'un autre spot ; l'impact est le bout planté, pas l'endroit où le tube croise un trait. Deux flèches dans le même spot : seule la moins bonne compte, l'autre vaut M.
 - Tout reste sur le téléphone : aucune photo n'est envoyée sur Internet.
+- Mode intégré : ouverte dans un cadre avec `?embed=1&face=tri&diam=40&shaft=9&ten=small&per=3`, la page ne montre que la prise de vue et rend la volée lue à l'application hôte par `postMessage` (`cible-photo:end`, `cible-photo:cancel`). C'est ainsi que [Carnet de tir](https://github.com/josecodelover/carnet-de-tir) l'utilise pour sa saisie par photo, à partir d'une copie exacte de `index.html`.
 
 ## État du projet
 

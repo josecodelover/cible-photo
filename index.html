@@ -123,12 +123,22 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;",
 const $ = s => document.querySelector(s);
 const app = $("#app"), hdrBack = $("#hdrBack");
 
-let S = load() || { cfg: { face: "tri", diam: 40, shaft: 6, ten: "x", perEnd: 3 }, ends: [] };
+/* Mode intégré : la page est ouverte dans un cadre par une autre application (Carnet de tir), avec
+   « ?embed=1&face=tri&diam=40&shaft=9&ten=small&per=3 ». Elle ne garde alors ni réglages ni feuille de marque :
+   elle rend la volée lue à l'application hôte par postMessage (« cible-photo:end », « cible-photo:cancel »). */
+const QS = new URLSearchParams(location.search), EMBED = QS.has("embed");
+const toHost = msg => { try { parent.postMessage(msg, "*"); } catch { } };
+function embedCfg() {
+  const pick = (k, ok, d) => ok.includes(QS.get(k)) ? QS.get(k) : d, num = (k, lo, hi, d) => { const v = +QS.get(k); return v >= lo && v <= hi ? v : d; };
+  return { face: pick("face", ["tri", "full"], "tri"), diam: num("diam", 20, 122, 40), shaft: num("shaft", 3, 10, 6), ten: pick("ten", ["x", "plain", "small"], "x"), perEnd: Math.round(num("per", 1, 12, 3)) };
+}
+
+let S = EMBED ? { cfg: embedCfg(), ends: [] } : load() || { cfg: { face: "tri", diam: 40, shaft: 6, ten: "x", perEnd: 3 }, ends: [] };
 let screen = "home";
 let A = null;   // analyse en cours
 let cam = null; // flux vidéo de la visée
 
-function save() { localStorage.setItem(STORE, JSON.stringify(S)); }
+function save() { if (!EMBED) localStorage.setItem(STORE, JSON.stringify(S)); }
 function load() { try { const s = JSON.parse(localStorage.getItem(STORE)); return s && s.cfg && s.ends ? s : null; } catch { return null; } }
 const face = () => FACES[S.cfg.face];
 const med = a => { if (!a.length) return 0; const b = Float64Array.from(a).sort(); return b[b.length >> 1]; };
@@ -1243,11 +1253,12 @@ for (const id of ["#fCam", "#fGal"]) $(id).onchange = e => {
 
 /* ---------- rendu ---------- */
 function render() {
-  hdrBack.classList.toggle("hidden", screen === "home");
+  hdrBack.classList.toggle("hidden", screen === "home" && !EMBED);
   ({ home: renderHome, analyse: renderAnalyse, group: renderGroup, camera: renderCamera, zoomask: renderZoomAsk, zoom: renderZoom })[screen]();
   window.scrollTo(0, 0);
 }
 hdrBack.onclick = () => {
+  if (screen === "home") { if (EMBED) toHost({ type: "cible-photo:cancel" }); return; }
   if (screen === "zoomask" || screen === "zoom") return leaveZoom();        // retour à la photo d'ensemble
   if (screen === "analyse" && A && A.hits.length && !confirm("Abandonner cette photo ?")) return;
   stopCamera(); screen = "home"; A = null; zoomFor = null; render();
@@ -1273,6 +1284,18 @@ const photoTips = () => `<ol class="steps">
 
 function renderHome() {
   const c = S.cfg, all = S.ends.flatMap(e => e.arrows), total = all.reduce((s, a) => s + val(a.v), 0);
+  if (EMBED) {      // mode intégré : seulement la prise de vue, les réglages viennent de l'application hôte
+    app.innerHTML = `<div class="card">
+      <h2 class="withinfo">Saisie par photo ${tipBtn("tipHome", "Conseils pour la photo")}</h2>
+      ${tipBox("tipHome", photoTips())}
+      <div class="row"><button class="btn" id="bCam">📷 Photographier</button><button class="btn sec" id="bGal">🖼 Galerie</button></div>
+      <div class="hint" style="margin-top:10px">${face().name} ${c.diam} cm, tube de ${String(c.shaft).replace(".", ",")} mm, ${c.perEnd} flèche${c.perEnd > 1 ? "s" : ""} à lire.</div>
+    </div>`;
+    bindTips();
+    $("#bCam").onclick = startCamera;
+    $("#bGal").onclick = () => $("#fGal").click();
+    return;
+  }
   let cum = 0;
   app.innerHTML = `
     <div class="card">
@@ -1435,6 +1458,14 @@ function renderPanel() {
 }
 function validateEnd() {
   const n = A.hits.length, per = S.cfg.perEnd;
+  if (EMBED) {
+    // L'application hôte applique ses propres règles (même spot, flèches manquantes) : on lui rend la valeur lue de chaque impact.
+    if (!n) return alert("Aucun impact à valider : touchez la photo à l'endroit de chaque flèche.");
+    if (n > per) return alert(`${n} impacts pour ${per} flèche${per > 1 ? "s" : ""} à lire : retirez les repères en trop.`);
+    toHost({ type: "cible-photo:end", face: S.cfg.face, arrows: A.hits.map(h => { const l = locate(h.x, h.y); return { v: hitVal(h), spot: l.si, x: +l.nx.toFixed(3), y: +l.ny.toFixed(3), cordon: cordon(h) && !h.ov }; }) });
+    screen = "home"; A = null; render();
+    return;
+  }
   if (n > per && !confirm(`${n} impacts pour une volée de ${per} flèches. Valider quand même ?`)) return;
   if (n < per && !confirm(`${n} impact${n > 1 ? "s" : ""} pour une volée de ${per} flèches : les flèches manquantes seront comptées M. Valider ?`)) return;
   const ev = endVals(), arrows = A.hits.map((h, i) => { const l = locate(h.x, h.y); return { v: ev[i].v, x: +l.nx.toFixed(3), y: +l.ny.toFixed(3) }; });
@@ -1846,8 +1877,10 @@ window.selfTest = n => {
 };
 
 /* Bouton retour Android */
-if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
-window.androidBack = () => { if (screen === "home") return false; hdrBack.onclick(); return true; };
+if (!EMBED && "serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+window.androidBack = () => { if (screen === "home" && !EMBED) return false; hdrBack.onclick(); return true; };
+// Mode intégré : l'application hôte relaie la touche Retour.
+if (EMBED) window.addEventListener("message", e => { if (e.source === parent && e.data && e.data.type === "cible-photo:back") hdrBack.onclick(); });
 
 render();
 </script>
