@@ -50,6 +50,19 @@
   .qual.mid { background: #fff3cd; color: #6b4e00; }
   .qual.bad { background: #fde0dd; color: #8a1c13; }
   ol.steps { margin: 10px 0 0; padding-left: 20px; font-size: .86rem; line-height: 1.45; color: var(--ink); }
+  /* Bulle d'info : les conseils ne s'affichent que si on touche le « i » */
+  .card h2.withinfo { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .info { flex: none; width: 44px; height: 44px; margin: -10px -8px -10px 0; padding: 0; border: 0; background: none; display: grid; place-items: center; }
+  .info span { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--accent2); color: var(--accent2); font: italic 700 1rem Georgia, serif; display: grid; place-items: center; }
+  .info[aria-expanded=true] span { background: var(--accent2); color: #fff; }
+  .bubble { position: relative; background: #fff7d6; border-radius: 12px; padding: 10px 12px; margin: 0 0 12px; font-size: .86rem; line-height: 1.45; }
+  .bubble::before { content: ""; position: absolute; top: -7px; right: 12px; border: 8px solid transparent; border-top: 0; border-bottom-color: #fff7d6; }
+  .bubble ol.steps { margin: 0; }
+  .bubble .hint { margin-top: 6px; color: #6b4e00; }
+  .cam .info { position: absolute; top: 8px; right: 8px; margin: 0; }
+  .cam .info span { border-color: #fff; color: #fff; background: rgba(0,0,0,.45); }
+  .cam .info[aria-expanded=true] span { background: #fff; color: #111; }
+  .cam .bubble { position: absolute; top: 54px; left: 10px; right: 10px; margin: 0; box-shadow: 0 2px 10px rgba(0,0,0,.4); }
   .cam { position: relative; margin: 0 -14px; aspect-ratio: 3 / 4; background: #000; overflow: hidden; }
   .cam video { width: 100%; height: 100%; object-fit: cover; display: block; }
   .cam svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
@@ -300,7 +313,7 @@ function components(m, w, h) {          // composantes connexes (8 voisins) -> l
 /* ---------- vision : blason ---------- */
 /* Depuis le centre jaune, on lance des rayons et on repère les changements de couleur ;
    une ellipse est ajustée sur chaque frontière (jaune/rouge, rouge/bleu, ...). */
-function fitSpot(cls, d, w, h, cx, cy, ry, avoid) {
+function fitSpot(cls, d, w, h, cx, cy, ry, avoid, frac) {
   const F = face(), CODE = { Y: 1, R: 2, B: 3, K: 4 }, NB = F.bounds.length, NR = 160, win = Math.max(2, Math.round(ry * 0.15));
   const L = Math.max(3, Math.round(ry * 0.22)), maxLen = Math.ceil(ry * F.max / 2 * 1.7) + L;
   const pts = F.bounds.map(() => []);
@@ -336,7 +349,7 @@ function fitSpot(cls, d, w, h, cx, cy, ry, avoid) {
   }
   const els = [];
   for (let b = 0; b < NB; b++) {
-    if (pts[b].length < NR * 0.5) break;
+    if (pts[b].length < NR * (frac || 0.5)) break;
     const e = fitEllipse(pts[b]); if (!e) break;
     e.R = F.bounds[b][1]; els.push(e);
   }
@@ -364,16 +377,100 @@ function findSpots(cls, d, w, h) {
   const n = w * h, ym = new Uint8Array(n);
   for (let i = 0; i < n; i++) ym[i] = cls[i] === 1 ? 1 : 0;
   const comps = components(morph(ym, w, h, 2, true), w, h).sort((a, b) => b.length - a.length).slice(0, 10);
-  const want = S.cfg.face === "tri" ? 3 : 1, spots = [];
+  const want = S.cfg.face === "tri" ? 3 : 1, all = [];
   for (const px of comps) {
-    if (spots.length >= want || px.length < 80 || px.length < comps[0].length * 0.15) break;
+    if (px.length < 80 || px.length < comps[0].length * 0.15) break;
     let sx = 0, sy = 0; for (const i of px) { sx += i % w; sy += (i / w) | 0; }
     const cx = sx / px.length, cy = sy / px.length;
-    if (spots.some(sp => rho(outer(sp), cx, cy) < 1.1)) continue;
+    if (all.some(sp => rho(outer(sp), cx, cy) < 1.1)) continue;
     const sp = fitSpot(cls, d, w, h, cx, cy, Math.sqrt(px.length / Math.PI));
-    if (sp) spots.push(sp);
+    if (sp) all.push(sp);
   }
+  const spots = pickSpots(all, want, w, h, cls, d);
   return spots.sort((p, q) => outer(p).cy - outer(q).cy || outer(p).cx - outer(q).cx);
+}
+/* Plusieurs blasons peuvent être dans l'image (cibles voisines en concours). On garde celui qui a été
+   visé : entier dans l'image, puis le plus proche du centre. Pour un trispot, les trois centres doivent
+   être alignés, régulièrement espacés et de même taille. */
+/* Recale un spot estimé (anneaux copiés du voisin) sur le bord extérieur visible de sa dernière couleur :
+   on ne cherche qu'un décalage, en écartant les rayons masqués par une flèche. */
+function snapSpot(sp, cls, w, h) {
+  const F = face(), CODE = { Y: 1, R: 2, B: 3, K: 4 }, E = sp.els, n = E.length, o = E[n - 1], code = CODE[F.bounds[n - 1][0]];
+  const t0 = (n > 1 ? E[n - 2].R / o.R : 0.6) + 0.03, sz = Math.sqrt(o.a * o.b);
+  for (let it = 0; it < 3; it++) {
+    const c = Math.cos(o.th), s = Math.sin(o.th), rays = [];
+    for (let i = 0; i < 120; i++) {
+      const a = i / 120 * 2 * Math.PI, ex = o.a * Math.cos(a), ey = o.b * Math.sin(a), vx = ex * c - ey * s, vy = ex * s + ey * c, l = Math.hypot(vx, vy);
+      let last = -1, t = t0;
+      for (; t <= 1.13; t += 0.5 / l) {
+        const x = Math.round(o.cx + vx * t), y = Math.round(o.cy + vy * t);
+        if (x < 0 || y < 0 || x >= w || y >= h) { last = -1; break; }
+        if (cls[y * w + x] === code) last = t;
+      }
+      if (last > 0 && last < 1.1) rays.push([vx / l, vy / l, (last - 1) * l]);
+    }
+    if (rays.length < 30) return;
+    let D = [0, 0], use = rays;
+    for (let k = 0; k < 3; k++) {
+      let a = 0, b = 0, cc = 0, p = 0, q = 0;
+      for (const [nx, ny, dl] of use) { a += nx * nx; b += nx * ny; cc += ny * ny; p += nx * dl; q += ny * dl; }
+      const det = a * cc - b * b; if (Math.abs(det) < 1e-6) return;
+      D = [(p * cc - q * b) / det, (q * a - p * b) / det];
+      const keep = rays.filter(([nx, ny, dl]) => Math.abs(dl - nx * D[0] - ny * D[1]) < 0.05 * sz);
+      if (keep.length < 30) break; use = keep;
+    }
+    if (Math.hypot(D[0], D[1]) > 0.5 * sz) return;
+    for (const e of E) { e.cx += D[0]; e.cy += D[1]; }
+    sp.seed[0] += D[0]; sp.seed[1] += D[1];
+  }
+}
+function pickSpots(all, want, w, h, cls, d) {
+  const F = face(), info = all.map(sp => {
+    const e = ellAt(sp, F.max), m = Math.max(e.a, e.b) * 0.98;
+    return { sp, x: e.cx, y: e.cy, s: Math.sqrt(e.a * e.b), cut: e.cx - m < 0 || e.cy - m < 0 || e.cx + m > w - 1 || e.cy + m > h - 1 };
+  });
+  const diag = Math.hypot(w, h), cost = g => g.filter(q => q.cut).length * 10
+    + Math.hypot(g.reduce((s, q) => s + q.x, 0) / g.length - w / 2, g.reduce((s, q) => s + q.y, 0) / g.length - h / 2) / diag;
+  if (want === 1) return info.length ? [info.reduce((p, q) => cost([q]) < cost([p]) ? q : p).sp] : [];
+  /* Un spot dont le jaune est coupé en morceaux par une flèche ou des plumes n'est pas trouvé seul :
+     on le cherche là où deux spots voisins le prévoient, et s'il reste illisible on reprend les anneaux du voisin. */
+  const n0 = info.length, yel = (x, y, r) => {
+    let k = 0, t = 0;
+    for (let yy = Math.round(y - r); yy <= y + r; yy += 2) for (let xx = Math.round(x - r); xx <= x + r; xx += 2) {
+      if (xx < 0 || yy < 0 || xx >= w || yy >= h || Math.hypot(xx - x, yy - y) > r) continue; t++; if (cls[yy * w + xx] === 1) k++;
+    }
+    return t ? k / t : 0;
+  };
+  for (let i = 0; i < n0; i++) for (let j = i + 1; j < n0; j++) {
+    const p = info[i], q = info[j], s = (p.s + q.s) / 2, dist = Math.hypot(q.x - p.x, q.y - p.y) / s;
+    if (Math.max(p.s, q.s) / Math.min(p.s, q.s) > 1.3) continue;
+    const guess = dist > 1.7 && dist < 3.2 ? [[2 * q.x - p.x, 2 * q.y - p.y, q], [2 * p.x - q.x, 2 * p.y - q.y, p]]
+      : dist > 3.4 && dist < 6.4 ? [[(p.x + q.x) / 2, (p.y + q.y) / 2, p]] : [];
+    for (const [x, y, nb] of guess) {
+      if (x < 0 || y < 0 || x >= w || y >= h || info.some(o => Math.hypot(o.x - x, o.y - y) < 0.5 * s)) continue;
+      const ry = nb.sp.seed[2]; let sp = fitSpot(cls, d, w, h, x, y, ry, null, 0.3);
+      if (sp) { const e = ellAt(sp, F.max); if (Math.hypot(e.cx - x, e.cy - y) > 0.35 * s || Math.abs(Math.sqrt(e.a * e.b) / s - 1) > 0.2) sp = null; }
+      if (!sp) {
+        if (yel(x, y, ry * 0.8) < 0.3) continue;
+        sp = { els: nb.sp.els.map(e => ({ ...e, cx: e.cx + x - nb.x, cy: e.cy + y - nb.y })), seed: [x, y, ry], est: true };
+        snapSpot(sp, cls, w, h);
+      }
+      const e = ellAt(sp, F.max), m = Math.max(e.a, e.b) * 0.98;
+      info.push({ sp, x: e.cx, y: e.cy, s: Math.sqrt(e.a * e.b), est: sp.est, cut: e.cx - m < 0 || e.cy - m < 0 || e.cx + m > w - 1 || e.cy + m > h - 1 });
+    }
+  }
+  let best = null, bc = 1e9;
+  for (let i = 0; i < info.length; i++) for (let j = i + 1; j < info.length; j++) for (let k = j + 1; k < info.length; k++) {
+    const g = [info[i], info[j], info[k]], s = (g[0].s + g[1].s + g[2].s) / 3;
+    if (Math.max(g[0].s, g[1].s, g[2].s) / Math.min(g[0].s, g[1].s, g[2].s) > 1.3) continue;
+    // le spot du milieu est celui qui fait face au plus grand côté
+    const dd = [[1, 2], [0, 2], [0, 1]].map(([a, b]) => Math.hypot(g[a].x - g[b].x, g[a].y - g[b].y));
+    const mi = dd.indexOf(Math.max(...dd)), a = g[(mi + 1) % 3], b = g[(mi + 2) % 3], m = g[mi];
+    if (Math.hypot(m.x - (a.x + b.x) / 2, m.y - (a.y + b.y) / 2) > 0.35 * s) continue;
+    const sp = dd[mi] / 2 / s; if (sp < 1.7 || sp > 3.2) continue;
+    const c = cost(g) + g.filter(q => q.est).length; if (c < bc) { bc = c; best = g; }
+  }
+  return best ? best.map(q => q.sp) : all.slice(0, 3);
 }
 
 /* ---------- vision : flèches ---------- */
@@ -853,6 +950,7 @@ function quality(d, w, h, spots, k) {
   }
   const lum = cnt ? sum / cnt : 128, blur = ws.length > 10 ? med(ws) : 0, shaftPhoto = shaftU() * 2 * Math.min(...sz) / k;
   if (cut) bad.push("Le blason est coupé par le bord de l'image : reculez un peu.");
+  if (spots.some(sp => sp.est)) warn.push("Un spot est en partie masqué : ses anneaux sont estimés d'après les spots voisins. Vérifiez-les avec « Ajuster le blason ».");
   if (obl < 0.8 || Math.max(...sz) / Math.min(...sz) > 1.15) bad.push("Photo prise trop de biais : placez-vous bien en face, téléphone à hauteur du centre.");
   else if (obl < 0.9 || Math.max(...sz) / Math.min(...sz) > 1.08) warn.push("Photo légèrement de biais : les cordons seront moins fiables.");
   if (shaftPhoto < 5) bad.push("Blason trop petit dans l'image : approchez-vous pour qu'il remplisse le cadre.");
@@ -934,24 +1032,32 @@ const seg = (id, opts, cur) => `<div class="seg" id="${id}">${opts.map(([v, t]) 
 const minis = arr => [...arr].sort((p, q) => ord(q.v) - ord(p.v)).map(a => `<span class="mini z-${a.v}">${a.v}</span>`).join("");
 const endTotal = e => e.arrows.reduce((s, a) => s + val(a.v), 0);
 
+/* Bulle d'info : un bouton « i » et le texte qu'il affiche ou masque. */
+const tipBtn = (id, label) => `<button class="info" data-tip="${id}" aria-controls="${id}" aria-expanded="false" aria-label="${label}"><span aria-hidden="true">i</span></button>`;
+const tipBox = (id, html) => `<div class="bubble hidden" id="${id}">${html}</div>`;
+function bindTips() {
+  app.querySelectorAll(".info").forEach(b => b.onclick = () => b.setAttribute("aria-expanded", String(!$("#" + b.dataset.tip).classList.toggle("hidden"))));
+}
+const photoTips = () => `<ol class="steps">
+    <li>Laissez les flèches en cible.</li>
+    <li>Placez-vous <b>bien en face</b> du blason, à 1 ou 2 m, téléphone à hauteur du centre.</li>
+    <li>Amenez le blason dans le <b>gabarit en pointillé</b>${S.cfg.face === "tri" ? " (un spot par cercle)" : ""} : il doit être entier, sans rien de coupé.</li>
+    <li>Évitez le contre-jour, les reflets et le flash de près.</li>
+    <li>Tenez le téléphone immobile, attendez la mise au point, puis déclenchez.</li>
+  </ol>
+  <div class="hint">L'application contrôle ensuite la photo (cadrage, biais, netteté, lumière) et vous dit s'il faut la refaire.</div>`;
+
 function renderHome() {
   const c = S.cfg, all = S.ends.flatMap(e => e.arrows), total = all.reduce((s, a) => s + val(a.v), 0);
   let cum = 0;
   app.innerHTML = `
     <div class="card">
-      <h2>Nouvelle volée</h2>
+      <h2 class="withinfo">Nouvelle volée ${tipBtn("tipHome", "Conseils pour la photo")}</h2>
+      ${tipBox("tipHome", photoTips())}
       <div class="row">
         <button class="btn" id="bCam">📷 Photographier</button>
         <button class="btn sec" id="bGal">🖼 Galerie</button>
       </div>
-      <ol class="steps">
-        <li>Laissez les flèches en cible.</li>
-        <li>Placez-vous <b>bien en face</b> du blason, à 1 ou 2 m, téléphone à hauteur du centre.</li>
-        <li>Amenez le blason dans le <b>gabarit en pointillé</b>${c.face === "tri" ? " (un spot par cercle)" : ""} : il doit être entier, sans rien de coupé.</li>
-        <li>Évitez le contre-jour, les reflets et le flash de près.</li>
-        <li>Tenez le téléphone immobile, attendez la mise au point, puis déclenchez.</li>
-      </ol>
-      <div class="hint" style="margin-top:8px">L'application contrôle ensuite la photo (cadrage, biais, netteté, lumière) et vous dit s'il faut la refaire.</div>
       <button class="link" id="bDemo">Essayer avec une photo de démonstration</button>
     </div>
     <div class="card">
@@ -983,6 +1089,7 @@ function renderHome() {
       ${seg("cTen", [["x", "10 et X"], ["plain", "10 seul"], ["small", "Petit 10 (poulies)"]], c.ten)}
       <div class="hint" style="margin-top:8px">Le diamètre du tube sert à compter les cordons : une flèche qui touche la ligne prend la valeur supérieure.</div>
     </div>`;
+  bindTips();
   $("#bCam").onclick = startCamera;
   $("#bGal").onclick = () => $("#fGal").click();
   $("#bDemo").onclick = () => openPhoto(makeDemo(false));
@@ -1020,11 +1127,12 @@ function renderCamera() {
   app.innerHTML = `
     <div class="cam"><video id="vid" autoplay playsinline muted></video>
       <svg viewBox="0 0 300 400" preserveAspectRatio="none" fill="none" stroke="#fff" stroke-width="2" stroke-dasharray="7 5" style="filter:drop-shadow(0 0 2px #000)">${guide}</svg>
-      <div class="camtip">${tri ? "Placez les 3 spots dans les 3 cercles" : "Placez le blason dans le cercle"}, bien de face, sans pencher le téléphone</div>
+      ${tipBtn("tipCam", "Conseils pour la photo")}
+      ${tipBox("tipCam", photoTips())}
     </div>
     <button class="btn" id="cShot">📷 Déclencher</button>
-    <div class="row"><button class="btn sec sm" id="cGal">🖼 Galerie</button><button class="btn sec sm" id="cSys">Appareil photo du téléphone</button></div>
-    <div class="hint">Flèches en cible, 1 à 2 m, téléphone à hauteur du centre. Attendez que l'image soit nette avant de déclencher.</div>`;
+    <div class="row"><button class="btn sec sm" id="cGal">🖼 Galerie</button><button class="btn sec sm" id="cSys">Appareil photo du téléphone</button></div>`;
+  bindTips();
   const v = $("#vid"); v.srcObject = cam;
   $("#cShot").onclick = () => {
     if (!v.videoWidth) return;
@@ -1241,15 +1349,16 @@ let Z = null, zoomFor = null;
 function askZoom(i) { zoomFor = i; Z = null; screen = "zoomask"; render(); }
 function leaveZoom() { Z = null; zoomFor = null; screen = "analyse"; render(); }
 function renderZoomAsk() {
-  app.innerHTML = `<div class="card"><h2>Gros plan de la flèche n° ${zoomFor + 1}</h2>
-    <ol class="steps" style="margin-top:0">
+  app.innerHTML = `<div class="card"><h2 class="withinfo">Gros plan de la flèche n° ${zoomFor + 1} ${tipBtn("tipZoom", "Conseils pour le gros plan")}</h2>
+    ${tipBox("tipZoom", `<ol class="steps">
       <li>Approchez le téléphone à 20 ou 30 cm de la flèche.</li>
       <li>Restez presque de face : décalez-vous juste assez pour voir l'endroit où le tube entre dans la cible.</li>
       <li>Cadrez le point d'impact au milieu, avec le trait du cordon visible <b>de chaque côté du tube</b>.</li>
       <li>Attendez que l'image soit nette, puis déclenchez.</li>
-    </ol>
-    <div class="row" style="margin-top:12px"><button class="btn" id="zCam">📷 Photographier</button><button class="btn sec" id="zGal">🖼 Galerie</button></div>
+    </ol>`)}
+    <div class="row"><button class="btn" id="zCam">📷 Photographier</button><button class="btn sec" id="zGal">🖼 Galerie</button></div>
     <button class="btn sec" id="zNo" style="margin-top:10px">Annuler</button></div>`;
+  bindTips();
   $("#zCam").onclick = () => $("#fCam").click();
   $("#zGal").onclick = () => $("#fGal").click();
   $("#zNo").onclick = leaveZoom;

@@ -4,6 +4,7 @@ Application de tir à l'arc : on photographie le blason avec le téléphone, l'a
 
 - Blasons : trispot (6 à 10) et blason complet (1 à 10), 10 classique, X ou petit 10 poulies.
 - Prise de vue guidée : gabarit à l'écran, consignes, puis contrôle de la photo (floue, coupée, trop en biais, trop petite, mal éclairée) avec demande de la refaire si besoin.
+- Si plusieurs blasons sont dans l'image (cibles voisines en concours), l'application garde celui qui est entier et le plus au centre. Un spot en partie masqué par une flèche est placé d'après ses deux voisins, avec un avertissement.
 - Chaque impact peut être déplacé, ajouté ou supprimé au doigt avant validation.
 - Chaque impact est affiné sur la photo en pleine résolution : axe et largeur du tube mesurés sur ses bords, centre du trou placé un rayon en retrait du bout du tube, rayon recalé sur le trait imprimé voisin.
 - Les flèches trop près d'une ligne pour trancher sont signalées « ⚠ cordon ». On peut alors prendre la flèche en **gros plan** (bouton « 🔍 Gros plan ») : on touche le tube sur la photo rapprochée et l'application mesure l'écart entre le bord du tube et le trait.
