@@ -1436,10 +1436,10 @@ function renderPanel() {
       <div class="tot">Total<b>${tot}</b></div>
     </div>
     ${ev.some(e => e.dup) ? `<div class="hint" style="margin-bottom:10px">✕ même spot : deux flèches dans le même spot, seule la moins bonne compte, l'autre vaut M. Si un repère est mal placé, glissez-le sur le bon spot.</div>` : ""}
-    ${A.hits.some(h => !h.ov && cordon(h)) ? `<div class="hint" style="margin-bottom:10px">⚠ cordon : le tube passe trop près d'une ligne pour que cette photo permette de trancher. Sélectionnez la flèche puis prenez-la en <b>gros plan</b>, ou regardez la cible et fixez la valeur avec « Valeur − / ＋ ».</div>` : ""}
+    ${A.hits.some(h => !h.ov && cordon(h)) ? `<div class="hint" style="margin-bottom:10px">⚠ cordon : le tube passe trop près d'une ligne pour que cette photo permette de trancher. Prenez-la en <b>gros plan</b> avec le bouton ci-dessous, ou regardez la cible et fixez la valeur avec « Valeur − / ＋ ».</div>` : ""}
     ${sel ? `<div class="row" style="margin-bottom:10px">
-      <button class="btn sec sm" id="pMinus">Valeur −</button><button class="btn sec sm" id="pPlus">Valeur ＋</button><button class="btn sec sm" id="pRem">Supprimer</button></div>
-      <button class="btn sm ${!sel.ov && cordon(sel) ? "" : "sec"}" id="pZoom" style="margin-bottom:10px">🔍 Gros plan de la flèche n° ${A.sel + 1}</button>` : ""}
+      <button class="btn sec sm" id="pMinus">Valeur −</button><button class="btn sec sm" id="pPlus">Valeur ＋</button><button class="btn sec sm" id="pRem">Supprimer</button></div>` : ""}
+    ${A.hits.length && A.spots.length ? `<button class="btn sm ${A.hits.some(h => !h.ov && cordon(h)) ? "" : "sec"}" id="pZoom" style="margin-bottom:10px">🔍 Gros plan ${sel ? "de la flèche n° " + (A.sel + 1) : "d'une flèche"} (photo rapprochée)</button>` : ""}
     <div class="row" style="margin-bottom:10px">
       <button class="btn sec sm" id="pFace">Ajuster le blason</button><button class="btn sec sm" id="pRedo">Relancer l'analyse</button>
     </div>
@@ -1449,9 +1449,10 @@ function renderPanel() {
   if (sel) {
     const bump = d => { const l = ladder(), i = l.indexOf(hitVal(sel)), j = Math.max(0, Math.min(l.length - 1, i + d)); const loc = hitLoc(sel); sel.ov = loc && scoreAt(loc.r) === l[j] ? null : l[j]; renderPanel(); draw(); };
     $("#pMinus").onclick = () => bump(-1); $("#pPlus").onclick = () => bump(1);
-    $("#pZoom").onclick = () => askZoom(A.sel);
     $("#pRem").onclick = () => { A.hits.splice(A.sel, 1); A.sel = -1; renderPanel(); draw(); };
   }
+  // sans flèche sélectionnée : la première signalée « cordon », à défaut la première ; le choix se corrige à l'écran suivant
+  if ($("#pZoom")) $("#pZoom").onclick = () => askZoom(sel ? A.sel : Math.max(0, A.hits.findIndex(h => !h.ov && cordon(h))));
   $("#pFace").onclick = () => { if (!A.spots.length) manualSpots(); A.mode = "face"; A.sel = -1; renderPanel(); draw(); };
   $("#pRedo").onclick = () => { $("#amsg").textContent = "Analyse en cours…"; setTimeout(() => { detect(); renderPanel(); draw(); }, 30); };
   $("#pOk").onclick = validateEnd;
@@ -1612,9 +1613,13 @@ function renderZoomAsk() {
       <li>Cadrez le point d'impact au milieu, avec le trait du cordon visible <b>de chaque côté du tube</b>.</li>
       <li>Attendez que l'image soit nette, puis déclenchez.</li>
     </ol>`)}
+    ${A.hits.length > 1 ? `<div class="hint" style="margin-bottom:6px">Quelle flèche voulez-vous prendre de près ?</div>
+      ${seg("zWho", A.hits.map((h, i) => [i, `n° ${i + 1} : ${hitVal(h)}${!h.ov && cordon(h) ? " ⚠" : ""}`]), zoomFor)}` : ""}
+    <div class="hint" style="margin:10px 0">Prenez la flèche à 20 ou 30 cm, presque de face, puis touchez son tube sur la photo.</div>
     <div class="row"><button class="btn" id="zCam">📷 Photographier</button><button class="btn sec" id="zGal">🖼 Galerie</button></div>
     <button class="btn sec" id="zNo" style="margin-top:10px">Annuler</button></div>`;
   bindTips();
+  if ($("#zWho")) $("#zWho").querySelectorAll("button").forEach(b => b.onclick = () => { zoomFor = +b.dataset.v; renderZoomAsk(); });
   $("#zCam").onclick = () => $("#fCam").click();
   $("#zGal").onclick = () => $("#fGal").click();
   $("#zNo").onclick = leaveZoom;
@@ -1640,7 +1645,8 @@ function renderZoom() {
     if (x < 0 || y < 0 || x >= Z.photo.width || y >= Z.photo.height) return;
     $("#zmsg").textContent = "Mesure en cours…";
     setTimeout(() => {
-      try { zoomAnalyse(x, y); } catch (err) { console.error(err); Z.stage = "fail"; Z.msg = "La mesure a échoué sur cette photo."; }
+      // recherche du tube jusqu'à 36 px d'écran autour du doigt
+      try { zoomAnalyse(x, y, 36 / V.s); } catch (err) { console.error(err); Z.stage = "fail"; Z.msg = "La mesure a échoué sur cette photo."; }
       zoomPanel(); drawZoom();
     }, 30);
   };
@@ -1648,7 +1654,7 @@ function renderZoom() {
 }
 function zoomPanel() {
   const n = Z.i + 1, R = Z.res;
-  $("#zmsg").textContent = Z.stage === "tap" ? `Touchez le tube de la flèche n° ${n}, tout près de l'endroit où il entre dans la cible.` : Z.stage === "fail" ? Z.msg : R.text;
+  $("#zmsg").textContent = Z.stage === "tap" ? `Touchez le tube de la flèche n° ${n} (ou juste à côté), près de l'endroit où il entre dans la cible.` : Z.stage === "fail" ? Z.msg : R.text;
   $("#zpanel").innerHTML = (Z.stage === "done" ? `<div class="hint" style="margin:10px 0">Cercle rose : le tube à son entrée dans la cible. Trait vert : le cordon repéré. Si l'un des deux est mal placé, désignez le tube à nouveau ou refaites la photo.</div>
       <button class="btn" id="zOk">Retenir ${R.val} pour la flèche n° ${n}</button>` : "")
     + `<div class="row" style="margin-top:10px">${Z.stage !== "tap" ? `<button class="btn sec sm" id="zTap">Désigner le tube</button>` : ""}<button class="btn sec sm" id="zNew">Autre photo</button><button class="btn sec sm" id="zNo">Annuler</button></div>`;
@@ -1672,12 +1678,46 @@ function drawZoom() {
   g.lineWidth = 2 * px; g.strokeStyle = "#ff2fb0"; g.stroke();
   g.beginPath(); g.moveTo(R.x - 5 * px, R.y); g.lineTo(R.x + 5 * px, R.y); g.moveTo(R.x, R.y - 5 * px); g.lineTo(R.x, R.y + 5 * px); g.lineWidth = px; g.stroke();
 }
-/* Le tube autour du point touché : tache de même couleur, allongée. Renvoie son bout côté cible, sa direction et son rayon (px). */
-function tubeAt(ph, sx, sy) {
+/* Le doigt tombe rarement pile sur le tube, qui ne fait que quelques pixels à l'écran : on cherche donc
+   les tubes autour du point touché (rayon reach, px de la photo), du plus proche au plus lointain.
+   Renvoie la liste des tubes trouvés, triés par distance de leur axe au point touché. */
+function tubesNear(ph, sx, sy, reach) {
   const k = Math.min(1, 640 / Math.max(ph.width, ph.height)), w = Math.round(ph.width * k), h = Math.round(ph.height * k);
   const c = document.createElement("canvas"); c.width = w; c.height = h;
   const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(ph, 0, 0, w, h);
-  const d = g.getImageData(0, 0, w, h).data, x0 = Math.min(w - 3, Math.max(2, Math.round(sx * k))), y0 = Math.min(h - 3, Math.max(2, Math.round(sy * k)));
+  const im = { k, w, h, d: g.getImageData(0, 0, w, h).data }, out = [], rk = Math.max(2, reach * k), st = Math.max(2, rk / 4);
+  const seeds = [[0, 0]];
+  for (let r = st; r <= rk + 0.01; r += st) { const n = Math.ceil(2 * Math.PI * r / st); for (let q = 0; q < n; q++) seeds.push([r * Math.cos(2 * Math.PI * q / n), r * Math.sin(2 * Math.PI * q / n)]); }
+  const dead = [], d = im.d;                          // couleurs déjà essayées sans succès (le fond, surtout)
+  for (const [ox, oy] of seeds) {
+    const X = sx * k + ox, Y = sy * k + oy;
+    if (X < 2 || Y < 2 || X > w - 3 || Y > h - 3) continue;
+    if (out.some(t => t.covers(X, Y))) continue;        // point déjà sur un tube trouvé
+    const xi = Math.round(X), yi = Math.round(Y), near = [];
+    for (let y = yi - 2; y <= yi + 2; y++) for (let x = xi - 2; x <= xi + 2; x++) { const i = (y * w + x) * 4; near.push([d[i], d[i + 1], d[i + 2]]); }
+    const c0 = cmed(near);
+    if (dead.some(c => Math.hypot(c[0] - c0[0], c[1] - c0[1], c[2] - c0[2]) < 10)) continue;
+    const t = tubeAt(ph, X / k, Y / k, im);
+    if (!t) { dead.push(c0); continue; }
+    // un tube pris de près fait 0,8 à 8 % de la photo en largeur et plusieurs fois sa largeur en longueur ;
+    // au-delà, c'est une zone imprimée ou un reflet (qui masquerait sinon le vrai tube à la recherche)
+    const big = Math.max(ph.width, ph.height);
+    if (t.rho < 0.004 * big || t.rho > 0.04 * big || t.len < 4 * t.rho) continue;
+    // distance du point touché au segment du tube (qui part du bout dans le sens ux, uy)
+    const vx = sx - t.x, vy = sy - t.y, a = Math.max(0, Math.min(t.len, vx * t.ux + vy * t.uy));
+    t.dist = Math.hypot(sx - (t.x + t.ux * a), sy - (t.y + t.uy * a));
+    if (t.dist > reach + 2 * t.rho) continue;
+    if (out.some(o => Math.hypot(o.x - t.x, o.y - t.y) < 2 * o.rho)) continue;   // même tube, trouvé deux fois
+    out.push(t);
+  }
+  return out.sort((p, q) => p.dist - q.dist);
+}
+/* Le tube autour du point touché : tache de même couleur, allongée. Renvoie son bout côté cible, sa direction et son rayon (px). */
+function tubeAt(ph, sx, sy, im) {
+  if (!im) { const k = Math.min(1, 640 / Math.max(ph.width, ph.height)), w = Math.round(ph.width * k), h = Math.round(ph.height * k);
+    const c = document.createElement("canvas"); c.width = w; c.height = h;
+    const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(ph, 0, 0, w, h); im = { k, w, h, d: g.getImageData(0, 0, w, h).data }; }
+  const { k, w, h, d } = im, x0 = Math.min(w - 3, Math.max(2, Math.round(sx * k))), y0 = Math.min(h - 3, Math.max(2, Math.round(sy * k)));
   const near = []; for (let y = y0 - 2; y <= y0 + 2; y++) for (let x = x0 - 2; x <= x0 + 2; x++) { const i = (y * w + x) * 4; near.push([d[i], d[i + 1], d[i + 2]]); }
   const c0 = cmed(near);
   for (const T of [45, 30]) {
@@ -1714,16 +1754,29 @@ function tubeAt(ph, sx, sy) {
     const edge = t => { const x = mx + ux * t, y = my + uy * t, b = er + 4; return x < b || y < b || x > w - 1 - b || y > h - 1 - b; };
     // le bout planté : celui qui ne sort pas de l'image ; à défaut, le plus proche du point touché
     const tip = edge(t0) !== edge(t1) ? (edge(t0) ? t1 : t0) : Math.abs(tsd - t0) < Math.abs(tsd - t1) ? t0 : t1, sg = tip === t0 ? 1 : -1;
-    return { x: (mx + ux * (tip - sg * er)) / k, y: (my + uy * (tip - sg * er)) / k, ux: ux * sg, uy: uy * sg, rho: (Math.sqrt(3 * l2) + er) / k, len: (t1 - t0 + 2 * er) / k };
+    const lo = Math.min(t0, t1) - er, hi = Math.max(t0, t1) + er, half = Math.sqrt(3 * l2) + er;
+    return { x: (mx + ux * (tip - sg * er)) / k, y: (my + uy * (tip - sg * er)) / k, ux: ux * sg, uy: uy * sg, rho: (Math.sqrt(3 * l2) + er) / k, len: (t1 - t0 + 2 * er) / k,
+      covers: (X, Y) => { const a = (X - mx) * ux + (Y - my) * uy, b = -(X - mx) * uy + (Y - my) * ux; return a >= lo && a <= hi && Math.abs(b) <= half; } };
   }
   return null;
 }
-function zoomAnalyse(sx, sy) {
+/* reach : rayon de recherche du tube autour du point touché (px de la photo) ; 0 = pile au point touché. */
+function zoomAnalyse(sx, sy, reach) {
+  const h = A.hits[Z.i];
+  if (!locate(h.x, h.y)) { Z.stage = "fail"; Z.res = null; Z.msg = "Cette flèche n'est plus sur le blason de la photo d'ensemble."; return; }
+  const ts = reach ? tubesNear(Z.photo, sx, sy, reach) : [tubeAt(Z.photo, sx, sy)].filter(Boolean);
+  if (!ts.length) { Z.stage = "fail"; Z.res = null; Z.msg = "Aucun tube trouvé à cet endroit. Touchez le tube lui-même, près de la cible ; s'il se confond avec le fond, jugez ce cordon sur la cible."; return; }
+  let msg = null;
+  for (const t of ts.slice(0, 6)) {                // le tube le plus proche d'abord ; un voisin ne passe pas le contrôle de cohérence
+    zoomTube(t);
+    if (Z.stage === "done") return;
+    msg = msg || Z.msg;
+  }
+  Z.msg = msg;
+}
+function zoomTube(t) {
   const fail = m => { Z.stage = "fail"; Z.res = null; Z.msg = m; };
   const h = A.hits[Z.i], l = locate(h.x, h.y), ph = Z.photo, su = shaftU();
-  if (!l) return fail("Cette flèche n'est plus sur le blason de la photo d'ensemble.");
-  const t = tubeAt(ph, sx, sy);
-  if (!t) return fail("Le tube ne se distingue pas assez du fond à cet endroit. Touchez-le ailleurs, ou jugez ce cordon sur la cible.");
   let P = t.rho / su; const m = 2.4 * P + 6 * t.rho + 12;
   const px = sampler(ph, t.x - m, t.y - m, t.x + m, t.y + m);
   const f = px && refineShaft(px, t.x, t.y, t.ux, t.uy, t.rho, P, t.len, t.rho);
