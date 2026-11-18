@@ -698,11 +698,22 @@ function findArrows(d, w, h, spots) {
       const X = Math.round(x + s * nx * o), Y = Math.round(y + s * ny * o); if (!inImg(X, Y)) return false;
       const i = (Y * w + X) * 4, k = s > 0 ? 0 : 3; f[k] += d[i] / 2; f[k + 1] += d[i + 1] / 2; f[k + 2] += d[i + 2] / 2;
     }
+    /* Ombre portée de la flèche : sur un anneau de couleur elle garde la teinte de l'anneau et l'assombrit
+       modérément, alors que le tube est bien plus sombre ou d'une autre teinte. Sans ce tri, sur le spot du haut
+       (flèche venue d'en haut, ombre dans son prolongement) le suivi continuait sur l'ombre, au-delà de la pointe.
+       Sur le papier blanc une ombre grise et un tube argenté ne se distinguent pas : le tri n'y est pas fait. */
+    const chr = (r, g, b) => { const L = .299 * r + .587 * g + .114 * b, q = 100 / Math.max(L, 60); return [L, (b - L) * q, (r - L) * q]; };
+    // à l'ombre, la teinte reste celle de l'anneau à quelques degrés près, la saturation peut monter
+    const cs = chr((f[0] + f[3]) / 2, (f[1] + f[4]) / 2, (f[2] + f[5]) / 2), sm = Math.hypot(cs[1], cs[2]), sat = sm > 40;
+    const shade = i => {
+      if (!sat) return false; const c = chr(d[i], d[i + 1], d[i + 2]), m = Math.hypot(c[1], c[2]);
+      return c[0] > 0.55 * cs[0] && c[0] < 0.92 * cs[0] && m > 0.85 * sm && m < 1.7 * sm && (c[1] * cs[1] + c[2] * cs[2]) / (m * sm) > Math.cos(6 * Math.PI / 180);
+    };
     // les deux bords du tube doivent se voir : une déchirure du papier n'en a qu'un
     let l = 0, r = 0;
     for (let o = -0.75 * sw; o <= 0.75 * sw; o += 1) {
       const X = Math.round(x + nx * o), Y = Math.round(y + ny * o), i = (Y * w + X) * 4;
-      if (Math.hypot(d[i] - f[0], d[i + 1] - f[1], d[i + 2] - f[2]) > 28 && Math.hypot(d[i] - f[3], d[i + 1] - f[4], d[i + 2] - f[5]) > 28) { if (o < -0.15 * sw) l++; else if (o > 0.15 * sw) r++; }
+      if (Math.hypot(d[i] - f[0], d[i + 1] - f[1], d[i + 2] - f[2]) > 28 && Math.hypot(d[i] - f[3], d[i + 1] - f[4], d[i + 2] - f[5]) > 28 && !shade(i)) { if (o < -0.15 * sw) l++; else if (o > 0.15 * sw) r++; }
     }
     return l > 0 && r > 0;
   };
@@ -718,7 +729,7 @@ function findArrows(d, w, h, spots) {
   /* Suit un tube au-delà du bout d'un segment : à travers les traits, les frontières de couleur, le papier
      entre deux spots et la zone noire. Renvoie le vrai bout, et s'il est hors de la zone marquante. */
   const trace = (ln, t, dir) => {
-    const nx = -ln.uy, ny = ln.ux; let wRun = wAt(ln, t - dir * Math.min(0.5 * rpx, (ln.t1 - ln.t0) / 3)), lms = 0, isM = false, off = 0, gap = 0, lx = ln.mx + ln.ux * t, ly = ln.my + ln.uy * t, ls = 0, edge = false;
+    const nx = -ln.uy, ny = ln.ux; let wRun = wAt(ln, t - dir * Math.min(0.5 * rpx, (ln.t1 - ln.t0) / 3)), lms = 0, isM = false, off = 0, gap = 0, lx = ln.mx + ln.ux * t, ly = ln.my + ln.uy * t, ls = 0, edge = false, run = null;
     for (let s = 1; s < 60 * rpx; s++) {
       const bx = ln.mx + ln.ux * (t + dir * s) + nx * off, by = ln.my + ln.uy * (t + dir * s) + ny * off, x = Math.round(bx), y = Math.round(by);
       if (!inImg(x, y)) { edge = true; break; }
@@ -736,9 +747,16 @@ function findArrows(d, w, h, spots) {
         if (c >= 0.5 * wRun && c <= 1.5 * wRun + 2 && Math.abs(m) < 0.6 * tol + 0.12 * gap) { hit = isM = true; off += 0.5 * m; wRun = 0.9 * wRun + 0.1 * c; }
       }
       if (!hit) for (const o of [0, 1.5, -1.5]) if (ridge(bx + nx * o, by + ny * o, nx, ny, inZ ? 0 : wRun - 2 * g)) { hit = true; off += 0.3 * o; break; }
-      if (hit) { gap = 0; lx = bx; ly = by; ls = s; if (isM) lms = s; }
+      if (hit) {
+        // reprise après un vrai trou : on garde de quoi revenir en arrière si ce n'est qu'un court morceau de relief
+        if (gap >= 0.15 * rpx) run = { s, mk: false, back: { lx, ly, ls, lms } };
+        if (run && isM) run.mk = true;
+        gap = 0; lx = bx; ly = by; ls = s; if (isM) lms = s;
+      }
       else if (++gap > (inZ && isK(i) ? 2.6 : inZ && !bt ? 0.25 : 0.4) * rpx) break;
     }
+    // un court morceau vu au relief seul, au-delà d'un trou, est un trait imprimé ou un bord de trou, pas le tube
+    if (run && !run.mk && ls - run.s < 0.3 * rpx) ({ lx, ly, ls, lms } = run.back);
     return { x: lx, y: ly, s: ls, mk: ls - lms <= 0.35 * rpx, out: edge || rAt(lx, ly) > F.max + shaftU() + 0.1 };
   };
   for (const px of components(mask, w, h)) {

@@ -2,7 +2,7 @@
 //   python outils/image-brute.py to photo.png dossier/photo.rgba      (image -> pixels bruts)
 //   node outils/essai-node.js index.html dossier photo                (impacts, tubes suivis ; écrit dossier/photo.dbg)
 //   python outils/image-brute.py from dossier/photo.dbg controle.png  (image de contrôle : masque, tubes, anneaux)
-// _tstBands est activé : à retirer pour une photo d'origine (il sert aux captures d'écran, où les anneaux verts sont incrustés).
+// _tstBands est activé pour les captures d'écran (anneaux verts incrustés) ; pour une photo d'origine, lancer avec ORIG=1.
 const fs = require("fs"), path = require("path");
 const [html, dir, ...names] = process.argv.slice(2);
 const dummy = new Proxy(function () {}, { get: (t, k) => (k === Symbol.toPrimitive ? () => "" : dummy), apply: () => dummy, set: () => true, construct: () => dummy });
@@ -38,7 +38,7 @@ const src = fs.readFileSync(html, "utf8"), js = src.slice(src.indexOf("<script>"
 const load = n => { const b = fs.readFileSync(path.join(dir, n + ".rgba")), w = b.readUInt32LE(0), h = b.readUInt32LE(4); return new Canvas(w, h, new Uint8ClampedArray(b.buffer, b.byteOffset + 8, w * h * 4)); };
 const tail = `
 ;globalThis.__run = (ph, cfg, dbgOut) => {
-  Object.assign(S.cfg, cfg); A = { photo: ph, spots: [], hits: [], sel: -1, mode: "hits" }; window._dbg = true; window._tstBands = true; detect();
+  Object.assign(S.cfg, cfg); A = { photo: ph, spots: [], hits: [], sel: -1, mode: "hits" }; window._dbg = true; window._tstBands = !process.env.ORIG; detect();
   const D = window._dbg, k = Math.min(1, 1100 / Math.max(ph.width, ph.height));
   const res = { n: A.spots.length, hits: A.hits.map(h => [Math.round(h.x), Math.round(h.y), hitVal(h), h.unsure ? "?" : "", cordon(h) ? "c" : ""]),
     vp: D.vp && D.vp.map(v => Math.round(v / k)), arrows: (D.arrows || []).map(a => a.e.map(e => [Math.round(e.x / k), Math.round(e.y / k), e.out ? "out" : "in"]).concat([a.m.join("/"), +(a.cov || 0).toFixed(2)])) };
