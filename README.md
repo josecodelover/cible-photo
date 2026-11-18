@@ -16,7 +16,9 @@ Application de tir à l'arc : on photographie le blason avec le téléphone, l'a
 
 Première confrontation à de vraies photos (trois volées sur trispot, 12 novembre 2026) : l'impact était lu le long du tube, là où il croisait un trait ou un autre spot, et non à la pointe. Cause : sur un vrai blason le tube est long (il sort souvent de l'image ou passe au-dessus du spot voisin), il est brillant et prend la couleur de l'anneau près de la pointe, et le papier est criblé de trous. L'assemblage du trispot a été refait en conséquence. Il n'a été vérifié que sur des captures d'écran de ces trois volées (8 impacts sur 9 replacés au bon endroit), pas encore sur les photos d'origine.
 
-Deuxième confrontation (quatre volées sur trispot, 18 novembre 2026, photos d'origine) : sur le spot du haut, la flèche arrive par le haut et son ombre continue le tube vers le bas ; le suivi la prenait pour le tube et plaçait l'impact 40 à 140 px sous la pointe. Corrigé en 1.3.2 : les 4 impacts du spot du haut sont à moins de 10 px de la pointe. Restent sur ces 12 flèches : deux impacts du spot du bas lus 30 à 50 px au-delà de la pointe, à travers les trous groupés au centre, et une flèche vue presque de face (spot du milieu) remplacée par un trou. Le blason complet n'a pas encore été confronté à de vraies photos.
+Deuxième confrontation (quatre volées sur trispot, 18 novembre 2026, photos d'origine) : sur le spot du haut, la flèche arrive par le haut et son ombre continue le tube vers le bas ; le suivi la prenait pour le tube et plaçait l'impact 40 à 140 px sous la pointe. Corrigé en 1.3.2 : les 4 impacts du spot du haut sont à moins de 10 px de la pointe. Restent sur ces 12 flèches : deux impacts du spot du bas lus 30 à 50 px au-delà de la pointe, à travers les trous groupés au centre, et une flèche vue presque de face (spot du milieu) remplacée par un trou.
+
+En 1.3.3, avec quatre autres volées en pleine résolution : l'affinage du bout, lui aussi, suivait l'ombre (jusqu'à 65 px au-delà de la pointe) ; il s'arrête maintenant où l'ombre commence. `outils/evaluer.py` mesure l'écart à la pointe relevée à l'œil (`essais/verite.json`) : sur 24 flèches, 6 à plus de 15 px (8 en 1.3.2), écart médian 6 px (un anneau fait environ 41 px). Les 6 : deux flèches au gros empennage tout près du blason non trouvées (un trou à leur place) ; deux spots du bas où un trou collé à la pointe se confond avec le tube ; un pli du papier suivi au-delà de la pointe ; un écart de 16 px. Le blason complet n'a pas encore été confronté à de vraies photos.
 
 Sur le banc d'essai simulé (60 scènes par blason, `outils/banc-essai.js`) :
 
@@ -52,6 +54,7 @@ Après une mise à jour de `index.html`, augmenter `VERSION` dans `sw.js`, sinon
 | `android/` | Enveloppe Android (WebView) et script `build_apk.ps1` (sans Gradle : aapt2, javac, d8, apksigner) |
 | `android/make_icons.ps1` | Génère les icônes |
 | `outils/essai-node.js`, `outils/image-brute.py` | Lance la détection hors navigateur (Node) sur une photo et produit une image de contrôle ; mode d'emploi en tête du fichier |
+| `outils/evaluer.py` | Écart à la pointe sur les vraies photos de `essais/` dont la vérité est relevée dans `essais/verite.json` (dossier local, non publié) |
 | `outils/banc-essai.js` | Banc d'essai (scènes simulées reproductibles, gros plans simulés) ; non chargé par l'application |
 
 Dans la console du navigateur, `selfTest(20)` lance le banc d'essai sur 20 cibles simulées. Le mode d'emploi du banc complet est en tête de `outils/banc-essai.js`.

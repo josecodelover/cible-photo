@@ -698,17 +698,7 @@ function findArrows(d, w, h, spots) {
       const X = Math.round(x + s * nx * o), Y = Math.round(y + s * ny * o); if (!inImg(X, Y)) return false;
       const i = (Y * w + X) * 4, k = s > 0 ? 0 : 3; f[k] += d[i] / 2; f[k + 1] += d[i + 1] / 2; f[k + 2] += d[i + 2] / 2;
     }
-    /* Ombre portée de la flèche : sur un anneau de couleur elle garde la teinte de l'anneau et l'assombrit
-       modérément, alors que le tube est bien plus sombre ou d'une autre teinte. Sans ce tri, sur le spot du haut
-       (flèche venue d'en haut, ombre dans son prolongement) le suivi continuait sur l'ombre, au-delà de la pointe.
-       Sur le papier blanc une ombre grise et un tube argenté ne se distinguent pas : le tri n'y est pas fait. */
-    const chr = (r, g, b) => { const L = .299 * r + .587 * g + .114 * b, q = 100 / Math.max(L, 60); return [L, (b - L) * q, (r - L) * q]; };
-    // à l'ombre, la teinte reste celle de l'anneau à quelques degrés près, la saturation peut monter
-    const cs = chr((f[0] + f[3]) / 2, (f[1] + f[4]) / 2, (f[2] + f[5]) / 2), sm = Math.hypot(cs[1], cs[2]), sat = sm > 40;
-    const shade = i => {
-      if (!sat) return false; const c = chr(d[i], d[i + 1], d[i + 2]), m = Math.hypot(c[1], c[2]);
-      return c[0] > 0.55 * cs[0] && c[0] < 0.92 * cs[0] && m > 0.85 * sm && m < 1.7 * sm && (c[1] * cs[1] + c[2] * cs[2]) / (m * sm) > Math.cos(6 * Math.PI / 180);
-    };
+    const bg = [(f[0] + f[3]) / 2, (f[1] + f[4]) / 2, (f[2] + f[5]) / 2], shade = i => isShade([d[i], d[i + 1], d[i + 2]], bg);
     // les deux bords du tube doivent se voir : une déchirure du papier n'en a qu'un
     let l = 0, r = 0;
     for (let o = -0.75 * sw; o <= 0.75 * sw; o += 1) {
@@ -905,6 +895,16 @@ function findArrows(d, w, h, spots) {
   }
   return kept.slice(0, S.cfg.perEnd).sort((p, q) => p.y - q.y || p.x - q.x);
 }
+/* Ombre portée de la flèche : sur un anneau de couleur (bg) elle garde la teinte de l'anneau à quelques degrés
+   près et l'assombrit modérément (la saturation peut monter), alors que le tube est bien plus sombre ou d'une autre
+   teinte. Sur le spot du haut (flèche venue d'en haut) l'ombre prolonge le tube au-delà de la pointe.
+   Sur le papier blanc une ombre grise et un tube argenté ne se distinguent pas : renvoie toujours faux. */
+function isShade(c, bg) {
+  const chr = (r, g, b) => { const L = .299 * r + .587 * g + .114 * b, q = 100 / Math.max(L, 60); return [L, (b - L) * q, (r - L) * q]; };
+  const s = chr(...bg), sm = Math.hypot(s[1], s[2]); if (sm <= 40) return false;
+  const k = chr(...c), m = Math.hypot(k[1], k[2]);
+  return k[0] > 0.55 * s[0] && k[0] < 0.92 * s[0] && m > 0.85 * sm && m < 1.7 * sm && (k[1] * s[1] + k[2] * s[2]) / (m * sm) > Math.cos(6 * Math.PI / 180);
+}
 function ransacLines(xs, ys, tol, minLen, wt) {
   const n = xs.length, alive = new Uint8Array(n).fill(1), out = [];
   let seed = (n * 2654435761 + xs[0] * 40503 + ys[0]) >>> 0;                 // tirage reproductible : même photo, même résultat
@@ -1062,7 +1062,11 @@ function refineShaft(px, tx, ty, ux, uy, rho0, P, len, tipErr) {
   out.dark = .299 * cS[0] + .587 * cS[1] + .114 * cS[2] < 90;
   for (let t = s0; t >= -(4.4 * tipErr + 2 * rho); t -= 0.5) {
     const c = [at(t, -0.3 * rho), at(t, 0), at(t, 0.3 * rho)]; if (c.some(q => !q)) break;
-    ps.push(s0 - t); ds.push(cdist([0, 1, 2].map(k => (c[0][k] + c[1][k] + c[2][k]) / 3), cS));
+    const cm = [0, 1, 2].map(k => (c[0][k] + c[1][k] + c[2][k]) / 3), b1 = at(t, -2.6 * rho), b2 = at(t, 2.6 * rho);
+    // l'ombre qui prolonge le tube a souvent sa couleur : ce n'est plus le tube si elle garde la teinte de l'anneau voisin
+    // et s'écarte nettement de la couleur du tube (un tube doré qui reflète le jaune y ressemble aussi par endroits)
+    const bm = b1 && b2 && [0, 1, 2].map(k => (b1[k] + b2[k]) / 2), dc = cdist(cm, cS), sh = bm && dc > 40 && isShade(cm, bm);
+    ps.push(s0 - t); ds.push(sh ? 255 : dc);
   }
   const e = exitAt(ps, ds, Math.max(3, Math.ceil(0.5 * s0)), Math.max(4, Math.round(3 * rho)), 2, Math.max(6, Math.round(0.6 * P)));
   if (e == null) return out;
