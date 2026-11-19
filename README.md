@@ -20,14 +20,16 @@ Deuxième confrontation (quatre volées sur trispot, 18 novembre 2026, photos d'
 
 En 1.3.3, avec quatre autres volées en pleine résolution : l'affinage du bout, lui aussi, suivait l'ombre (jusqu'à 65 px au-delà de la pointe) ; il s'arrête maintenant où l'ombre commence. `outils/evaluer.py` mesure l'écart à la pointe relevée à l'œil (`essais/verite.json`) : sur 24 flèches, 6 à plus de 15 px (8 en 1.3.2), écart médian 6 px (un anneau fait environ 41 px). Les 6 : deux flèches au gros empennage tout près du blason non trouvées (un trou à leur place) ; deux spots du bas où un trou collé à la pointe se confond avec le tube ; un pli du papier suivi au-delà de la pointe ; un écart de 16 px. Le blason complet n'a pas encore été confronté à de vraies photos.
 
+En 1.3.4, avec six volées tirées en extérieur en fin de journée (18 novembre 2026, soleil rasant, photos prises de plus loin) : l'écart est maintenant compté en centièmes d'anneau, faux au-delà de 35. Sur 40 flèches dont la pointe est visible, 13 fausses au lieu de 18, écart médian 23 centièmes. Trois corrections : le contour d'un spot n'est plus déformé par les impacts groupés au bord du jaune ; un spot introuvable est recalé sur ses anneaux de couleur, et non plus seulement copié de ses voisins ; le côté empenné d'une flèche, quand il est net, l'emporte sur la perspective pour savoir quel bout est planté. Restent fausses : des pointes dans une ombre de soleil profonde (le tube reflète le jaune et l'ombre est plus nette que lui), des trous collés à la pointe, des flèches vues presque de face, et une volée où deux flèches se disputent le même spot.
+
 Sur le banc d'essai simulé (60 scènes par blason, `outils/banc-essai.js`) :
 
 | | Trispot | Blason complet |
 |---|---|---|
-| Flèches trouvées | 94 % | 75 % |
-| Erreur de position médiane | 0,017 anneau (0,16 sans l'affinage) | 0,015 anneau (0,17) |
-| Bonne valeur, parmi les flèches trouvées | 98 % (93 %) | 90 % (86 %) |
-| Valeur fausse sans alerte | 0 sur 169 (6) | 2 sur 136 (7) |
+| Flèches trouvées | 96 % | 76 % |
+| Erreur de position médiane | 0,016 anneau (0,16 sans l'affinage) | 0,016 anneau (0,17) |
+| Bonne valeur, parmi les flèches trouvées | 99 % (93 %) | 90 % (86 %) |
+| Valeur fausse sans alerte | 0 sur 172 (6) | 1 sur 136 (7) |
 
 Marge au-delà de laquelle un cordon est signalé : 0,10 anneau pour un impact non affiné, 0,06 pour un impact affiné, 0,03 après un gros plan. Sur 100 flèches simulées à moins de 0,12 anneau d'un trait, le gros plan a pu mesurer 92 fois et s'est trompé 2 fois, les deux à moins de 0,03 anneau du trait, donc signalées.
 

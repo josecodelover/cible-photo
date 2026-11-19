@@ -3,8 +3,9 @@
     python outils/evaluer.py [index.html] [dossier-de-travail]
 
 Pour chaque flèche : écart entre l'impact proposé le plus proche et le bout planté relevé à l'œil,
-ramené à une photo de 1126 px de large (un anneau du trispot y fait environ 41 px). L'impact proposé
-est le centre du trou, un rayon de tube en retrait du bout : un écart de 5 à 10 px est normal.
+en centièmes d'anneau (largeur d'anneau moyenne des spots détectés). Au-delà de 35 (marqué !), l'impact
+est faux. L'impact proposé
+est le centre du trou, un rayon de tube en retrait du bout : un écart de 10 à 25 est normal.
 """
 import json, os, subprocess, sys, tempfile
 sys.stdout.reconfigure(encoding="utf-8")
@@ -30,10 +31,12 @@ res = {l.split(" ", 1)[0]: json.loads(l.split(" ", 1)[1]) for l in out.splitline
 
 errs, bad = [], 0
 for f, pts in verite.items():
-    n = os.path.splitext(f)[0]; k = ech[n]; hits = res.get(n, {}).get("hits", []); ligne = []
-    for (x, y) in pts:
+    n = os.path.splitext(f)[0]; r = res.get(n, {}); k = (r.get("rpx") or 41 * ech[n]) / 100; hits = r.get("hits", []); ligne = []
+    for pt in pts:
+        if pt is None: ligne.append("    ? "); continue
+        x, y = pt
         e = min((((h[0] - x) ** 2 + (h[1] - y) ** 2) ** 0.5 / k for h in hits), default=999)
-        errs.append(e); bad += e > 15; ligne.append(f"{e:5.0f}{'!' if e > 15 else ' '}")
-    print(f"{n:22s}" + " ".join(ligne) + "   " + " ".join(h[2] for h in hits))
+        errs.append(e); bad += e > 35; ligne.append(f"{min(e, 999):5.0f}{'!' if e > 35 else ' '}")
+    print(f"{n:22s}" + " ".join(ligne) + f"   spots {r.get('n', 0)}  " + " ".join(h[2] for h in hits))
 errs.sort()
-print(f"flèches : {len(errs)}   écart > 15 px : {bad}   médiane : {errs[len(errs)//2]:.0f} px")
+print(f"flèches : {len(errs)}   fausses (> 0,35 anneau) : {bad}   médiane : {errs[len(errs)//2]:.0f} centièmes d'anneau")

@@ -40,7 +40,7 @@ const tail = `
 ;globalThis.__run = (ph, cfg, dbgOut) => {
   Object.assign(S.cfg, cfg); A = { photo: ph, spots: [], hits: [], sel: -1, mode: "hits" }; window._dbg = true; window._tstBands = !process.env.ORIG; detect();
   const D = window._dbg, k = Math.min(1, 1100 / Math.max(ph.width, ph.height));
-  const res = { n: A.spots.length, hits: A.hits.map(h => [Math.round(h.x), Math.round(h.y), hitVal(h), h.unsure ? "?" : "", cordon(h) ? "c" : ""]),
+  const res = { n: A.spots.length, rpx: D.rpx ? +(D.rpx / k).toFixed(1) : null, hits: A.hits.map(h => [Math.round(h.x), Math.round(h.y), hitVal(h), h.unsure ? "?" : "", cordon(h) ? "c" : ""]),
     vp: D.vp && D.vp.map(v => Math.round(v / k)), arrows: (D.arrows || []).map(a => a.e.map(e => [Math.round(e.x / k), Math.round(e.y / k), e.out ? "out" : "in"]).concat([a.m.join("/"), +(a.cov || 0).toFixed(2)])) };
   if (dbgOut && D.mask) {
     const w = D.w, h = D.h, o = Buffer.alloc(8 + w * h * 3); o.writeUInt32LE(w, 0); o.writeUInt32LE(h, 4);
